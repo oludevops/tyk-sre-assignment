@@ -1,0 +1,30 @@
+# ClusterRoleBinding — binds the ClusterRole to the ServiceAccount.
+#
+# Without this binding, the ServiceAccount exists but has no permissions —
+# the ClusterRole and ServiceAccount are two separate objects that only
+# become connected through a binding.
+#
+# Think of it as:
+#   ClusterRole        = a job description listing allowed actions
+#   ServiceAccount     = an employee (the pod's identity)
+#   ClusterRoleBinding = the contract that gives the employee that job
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Chart.Name }}-rolebinding
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+roleRef:
+  # roleRef points to the ClusterRole we created above.
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Chart.Name }}-role   # must match the name in clusterrole.yaml
+
+subjects:
+  # subjects lists who gets the permissions defined in the ClusterRole.
+  - kind: ServiceAccount
+    name: {{ .Values.serviceAccount.name }}          # must match serviceaccount.yaml
+    namespace: {{ .Release.Namespace }}              # the namespace the pod runs in

@@ -1,0 +1,77 @@
+# =============================================================================
+# values.yaml — Default configuration for the sre-tool Helm chart
+# =============================================================================
+# These are the default values. Override any of them at install time with:
+#   helm install sre-tool ./helm/sre-tool --set image.tag=abc1234
+# Or with a custom values file:
+#   helm install sre-tool ./helm/sre-tool -f my-values.yaml
+# =============================================================================
+
+# Number of pod replicas to run.
+# For an SRE monitoring tool, 1 is usually sufficient.
+replicaCount: 1
+
+image:
+  # The container registry and image name.
+  # Change this to match your GitHub username if you forked the repo.
+  repository: ghcr.io/oludevops/sre-tool
+
+  # Image pull policy:
+  #   Always       — always pull from the registry (good for :latest)
+  #   IfNotPresent — use the local cache if the image is already present
+  #   Never        — never pull; fail if not already present
+  pullPolicy: IfNotPresent
+
+  # The image tag to deploy. Overridden by the CI/CD pipeline with the git SHA.
+  # Using "latest" is convenient for development but not recommended for
+  # production — a specific SHA or semver tag makes rollbacks reliable.
+  tag: "latest"
+
+# The service account the pod will run as.
+# Kubernetes mounts a token for this account into the pod automatically.
+# The ClusterRole bound to this account grants the tool read access to
+# Deployments and Namespaces across the entire cluster.
+serviceAccount:
+  name: sre-tool
+
+service:
+  # ClusterIP — only reachable inside the cluster (other pods, kubectl port-forward)
+  # NodePort   — reachable from outside via <NodeIP>:<NodePort>
+  # LoadBalancer — provisions a cloud load balancer (AWS ELB, GCP LB, etc.)
+  type: ClusterIP
+
+  # The port the Kubernetes Service listens on.
+  port: 8080
+
+  # The port the container listens on — must match what the Go server binds to.
+  targetPort: 8080
+
+# Resource requests and limits for the pod.
+# requests — the minimum resources Kubernetes guarantees the pod.
+# limits   — the maximum resources the pod is allowed to use.
+resources:
+  requests:
+    cpu: "50m"       # 50 millicores = 5% of one CPU core
+    memory: "64Mi"   # 64 mebibytes
+  limits:
+    cpu: "200m"      # 200 millicores = 20% of one CPU core
+    memory: "128Mi"  # 128 mebibytes
+
+# Liveness probe — Kubernetes restarts the pod if this fails.
+# It hits /healthz which now probes the k8s API, so a failed probe means
+# the tool cannot talk to the cluster and should be restarted.
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 15
+
+# Readiness probe — Kubernetes only sends traffic to the pod when this passes.
+# Until /healthz returns 200, the pod is excluded from the Service endpoints.
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: 8080
+  initialDelaySeconds: 3
+  periodSeconds: 10

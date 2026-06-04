@@ -1,0 +1,35 @@
+# Service — exposes the sre-tool pod(s) over the network.
+#
+# A pod's IP address changes every time it is restarted. A Service provides a
+# stable DNS name and IP that always routes to the healthy pods behind it.
+# Kubernetes automatically updates the Service endpoints as pods come and go.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Chart.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  # Service type pulled from values.yaml — default is ClusterIP.
+  # ClusterIP  : reachable only inside the cluster
+  # NodePort   : reachable from outside via <NodeIP>:<NodePort>
+  # LoadBalancer: provisions a cloud load balancer
+  type: {{ .Values.service.type }}
+
+  # The selector tells the Service which pods to route traffic to.
+  # It must match the labels applied to the pods in deployment.yaml.
+  selector:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+
+  ports:
+    - name: http
+      protocol: TCP
+      # port       — the port the Service listens on (what callers use)
+      # targetPort — the port on the pod the Service forwards to
+      port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.targetPort }}

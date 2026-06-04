@@ -1,0 +1,21 @@
+apiVersion: v2
+
+# The name of the chart — used by Helm when installing and referencing the release.
+name: sre-tool
+
+# A human-readable description shown by helm show chart and helm search.
+description: >
+  Kubernetes SRE tool that exposes HTTP endpoints for monitoring deployment
+  health and API server connectivity.
+
+# "application" means this chart deploys a workload.
+# The alternative is "library" for charts that only provide reusable templates.
+type: application
+
+# Chart version — bump this whenever you change the chart templates or values.
+# Follows Semantic Versioning: MAJOR.MINOR.PATCH
+version: 0.1.0
+
+# The version of the application this chart deploys.
+# This is independent of the chart version above.
+appVersion: "1.0.0"

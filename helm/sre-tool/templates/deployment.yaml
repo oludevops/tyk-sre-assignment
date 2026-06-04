@@ -1,0 +1,91 @@
+# Deployment — tells Kubernetes how to run the sre-tool container.
+#
+# A Deployment manages a set of identical pods (replicas). If a pod crashes,
+# the Deployment controller automatically starts a replacement. It also handles
+# rolling updates — new pods are started before old ones are stopped, so there
+# is no downtime when you deploy a new image.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+spec:
+  # How many identical pod replicas to run simultaneously.
+  # Pulled from values.yaml — default is 1.
+  replicas: {{ .Values.replicaCount }}
+
+  selector:
+    # The Deployment uses this label selector to find the pods it manages.
+    # It must match the labels in the pod template below.
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+
+  template:
+    # Pod template — describes the pod that the Deployment creates.
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Chart.Name }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      # Tell Kubernetes which ServiceAccount this pod runs as.
+      # Kubernetes automatically mounts the account's token into the pod at:
+      #   /var/run/secrets/kubernetes.io/serviceaccount/token
+      # The Go client-go library reads this token automatically when no
+      # kubeconfig is provided — this is called "in-cluster configuration".
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+
+      # Security context for the entire pod.
+      # runAsNonRoot ensures Kubernetes rejects the pod if the image tries
+      # to run as root, adding a second layer of defence.
+      securityContext:
+        runAsNonRoot: true
+
+      containers:
+        - name: {{ .Chart.Name }}
+          # The full image reference: registry/repository:tag
+          # Helm substitutes the values from values.yaml at install time.
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+
+          ports:
+            # The port the Go HTTP server listens on inside the container.
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+
+          # Liveness probe — if this fails, Kubernetes restarts the container.
+          # We hit /healthz which probes the k8s API, so a restart is the right
+          # response if the tool loses connectivity to the cluster.
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.livenessProbe.httpGet.path }}
+              port: {{ .Values.livenessProbe.httpGet.port }}
+            initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
+
+          # Readiness probe — until this passes, the pod receives no traffic.
+          # This prevents requests from hitting the pod before it has confirmed
+          # it can reach the Kubernetes API.
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.readinessProbe.httpGet.path }}
+              port: {{ .Values.readinessProbe.httpGet.port }}
+            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+
+          # Resource requests and limits pulled from values.yaml.
+          # requests — guaranteed minimum; used by the scheduler to choose a node.
+          # limits   — hard ceiling; the container is killed if it exceeds memory.
+          resources:
+            requests:
+              cpu: {{ .Values.resources.requests.cpu }}
+              memory: {{ .Values.resources.requests.memory }}
+            limits:
+              cpu: {{ .Values.resources.limits.cpu }}
+              memory: {{ .Values.resources.limits.memory }}
