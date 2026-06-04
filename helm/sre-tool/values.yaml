@@ -38,7 +38,7 @@ service:
   # ClusterIP — only reachable inside the cluster (other pods, kubectl port-forward)
   # NodePort   — reachable from outside via <NodeIP>:<NodePort>
   # LoadBalancer — provisions a cloud load balancer (AWS ELB, GCP LB, etc.)
-  type: ClusterIP
+  type: NodePort
 
   # The port the Kubernetes Service listens on.
   port: 8080

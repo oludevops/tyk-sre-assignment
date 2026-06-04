@@ -4,6 +4,49 @@ Packages the SRE tool for deployment into a Kubernetes cluster using Helm, with 
 
 ---
 
+## Quick Start — For Code Reviewers
+
+Everything you need to run the tool on your own cluster from scratch.
+
+**Prerequisites:** `kubectl`, `helm` v3, and a running Kubernetes cluster (minikube works).
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/oludevops/tyk-sre-assignment.git
+cd tyk-sre-assignment
+
+# 2. Install the Helm chart
+#    The image is public on ghcr.io — no registry login needed
+helm install sre-tool ./helm/sre-tool
+
+# 3. Wait for the pod to be ready (usually 15-30 seconds)
+kubectl get pods -w -l app.kubernetes.io/name=sre-tool
+
+# 4. Get the URL to access the tool
+#    On minikube:
+minikube service sre-tool --url
+
+#    On a standard cluster, get the NodePort:
+kubectl get svc sre-tool
+#    Then access via http://<node-ip>:<node-port>
+```
+
+**Endpoints to verify:**
+
+| Endpoint | What it shows |
+|----------|--------------|
+| `<url>/healthz` | JSON — whether the tool can reach the k8s API server |
+| `<url>/healthz?format=html` | HTML — green/red API server status dashboard |
+| `<url>/deployments/health` | JSON — health of every deployment in the cluster |
+| `<url>/deployments/health?format=html` | HTML — deployment health dashboard |
+
+**To uninstall:**
+```bash
+helm uninstall sre-tool
+```
+
+---
+
 ## What Was Built
 
 | Artifact | Location | Purpose |
@@ -192,24 +235,35 @@ kubectl get clusterrolebinding sre-tool-rolebinding
 
 ### Step 5 — Access the endpoints
 
-The Service type is `ClusterIP` by default — reachable inside the cluster only. Use `kubectl port-forward` to access it from your machine:
+The Service type is `NodePort` — reachable directly from outside the cluster without any tunnelling.
 
+**On minikube:**
 ```bash
-kubectl port-forward svc/sre-tool 8080:8080
+# Get the full URL automatically
+minikube service sre-tool --url
 ```
 
-Then in another terminal:
+This prints something like `http://192.168.49.2:31234`. Use that URL directly:
 
 ```bash
 # API server health check
-curl -s http://localhost:8080/healthz | jq .
+curl -s http://192.168.49.2:31234/healthz | jq .
 
 # Deployment health
-curl -s http://localhost:8080/deployments/health | jq .
+curl -s http://192.168.49.2:31234/deployments/health | jq .
 
-# HTML dashboards
-# http://localhost:8080/healthz?format=html
-# http://localhost:8080/deployments/health?format=html
+# HTML dashboards — open in browser
+# http://192.168.49.2:31234/healthz?format=html
+# http://192.168.49.2:31234/deployments/health?format=html
+```
+
+**On a standard cluster:**
+```bash
+# Get the NodePort assigned by Kubernetes
+kubectl get svc sre-tool
+
+# Access via any node IP on that port
+curl -s http://<node-ip>:<node-port>/healthz | jq .
 ```
 
 ### Upgrading
