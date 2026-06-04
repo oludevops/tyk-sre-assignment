@@ -6,32 +6,67 @@ Packages the SRE tool for deployment into a Kubernetes cluster using Helm, with 
 
 ## Quick Start — For Code Reviewers
 
-Everything you need to run the tool on your own cluster from scratch.
+Everything you need to run the tool on your own cluster from scratch. The image is public on `ghcr.io` — no registry login required.
 
-**Prerequisites:** `kubectl`, `helm` v3, and a running Kubernetes cluster (minikube works).
+**Prerequisites:** `kubectl`, `helm` v3, and a running Kubernetes cluster.
+
+> **Note:** This chart was developed and tested on **minikube**. Instructions for both minikube and AWS EKS are provided below.
+
+---
+
+### On minikube
 
 ```bash
 # 1. Clone the repository
 git clone https://github.com/oludevops/tyk-sre-assignment.git
 cd tyk-sre-assignment
 
-# 2. Install the Helm chart
-#    The image is public on ghcr.io — no registry login needed
-helm install sre-tool ./helm/sre-tool
+# 2. Install the Helm chart, overriding the service type to NodePort
+#    (minikube does not support LoadBalancer without extra tooling)
+helm install sre-tool ./helm/sre-tool --set service.type=NodePort
 
 # 3. Wait for the pod to be ready (usually 15-30 seconds)
 kubectl get pods -w -l app.kubernetes.io/name=sre-tool
 
-# 4. Get the URL to access the tool
-#    On minikube:
+# 4. Get the URL — minikube assigns a routable IP and port automatically
 minikube service sre-tool --url
-
-#    On a standard cluster, get the NodePort:
-kubectl get svc sre-tool
-#    Then access via http://<node-ip>:<node-port>
+# Example output: http://192.168.49.2:31234
 ```
 
-**Endpoints to verify:**
+Use the URL printed above to access the endpoints.
+
+---
+
+### On AWS EKS
+
+The default service type is `LoadBalancer`. On EKS this automatically provisions an AWS Load Balancer with a public DNS name — no security group changes or VPN access required.
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/oludevops/tyk-sre-assignment.git
+cd tyk-sre-assignment
+
+# 2. Make sure kubectl is pointing at your EKS cluster
+aws eks update-kubeconfig --region <your-region> --name <your-cluster-name>
+
+# 3. Install the Helm chart (LoadBalancer is the default — no override needed)
+helm install sre-tool ./helm/sre-tool
+
+# 4. Wait for the pod to be ready
+kubectl get pods -w -l app.kubernetes.io/name=sre-tool
+
+# 5. Get the public DNS name assigned by AWS
+kubectl get svc sre-tool
+# Look for the EXTERNAL-IP column — it will show an AWS DNS name like:
+# a1b2c3d4e5f6g7h8.eu-west-1.elb.amazonaws.com
+# This may take 1-2 minutes to appear while AWS provisions the load balancer
+```
+
+Use `http://<EXTERNAL-IP>` to access the endpoints.
+
+---
+
+### Endpoints to verify
 
 | Endpoint | What it shows |
 |----------|--------------|
@@ -40,7 +75,10 @@ kubectl get svc sre-tool
 | `<url>/deployments/health` | JSON — health of every deployment in the cluster |
 | `<url>/deployments/health?format=html` | HTML — deployment health dashboard |
 
-**To uninstall:**
+---
+
+### To uninstall
+
 ```bash
 helm uninstall sre-tool
 ```
@@ -235,35 +273,26 @@ kubectl get clusterrolebinding sre-tool-rolebinding
 
 ### Step 5 — Access the endpoints
 
-The Service type is `NodePort` — reachable directly from outside the cluster without any tunnelling.
+**On minikube** (NodePort override required):
 
-**On minikube:**
 ```bash
-# Get the full URL automatically
+helm install sre-tool ./helm/sre-tool --set service.type=NodePort
 minikube service sre-tool --url
-```
-
-This prints something like `http://192.168.49.2:31234`. Use that URL directly:
-
-```bash
-# API server health check
+# Prints: http://192.168.49.2:31234 — use this URL directly
 curl -s http://192.168.49.2:31234/healthz | jq .
-
-# Deployment health
 curl -s http://192.168.49.2:31234/deployments/health | jq .
-
-# HTML dashboards — open in browser
-# http://192.168.49.2:31234/healthz?format=html
-# http://192.168.49.2:31234/deployments/health?format=html
 ```
 
-**On a standard cluster:**
-```bash
-# Get the NodePort assigned by Kubernetes
-kubectl get svc sre-tool
+**On AWS EKS** (default LoadBalancer — no override needed):
 
-# Access via any node IP on that port
-curl -s http://<node-ip>:<node-port>/healthz | jq .
+```bash
+helm install sre-tool ./helm/sre-tool
+# Wait for the AWS load balancer to be provisioned (~1-2 minutes)
+kubectl get svc sre-tool
+# EXTERNAL-IP column shows the AWS DNS name e.g:
+# a1b2c3d4.eu-west-1.elb.amazonaws.com
+curl -s http://<EXTERNAL-IP>/healthz | jq .
+curl -s http://<EXTERNAL-IP>/deployments/health | jq .
 ```
 
 ### Upgrading
