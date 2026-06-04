@@ -26,6 +26,9 @@ import (
 	// "net/http" is Go's built-in HTTP server library.
 	"net/http"
 
+	// "time" provides time measurement — used to calculate API probe latency.
+	"time"
+
 	// metav1 contains common Kubernetes API types, like ListOptions.
 	// The alias "metav1" is conventional shorthand for this package.
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -107,9 +110,10 @@ func getKubernetesVersion(clientset kubernetes.Interface) (string, error) {
 // listenAddr is a host:port string, e.g. ":8080" means "listen on all interfaces, port 8080".
 // clientset is passed in so HTTP handlers can call the Kubernetes API.
 func startServer(listenAddr string, clientset kubernetes.Interface) error {
-	// Register the /healthz route. When a GET request arrives at /healthz,
-	// Go calls the healthHandler function.
-	http.HandleFunc("/healthz", healthHandler)
+	// Register the /healthz route.
+	// healthHandler is a factory — we pass the clientset so it can probe the
+	// Kubernetes API server on every request and report real connectivity status.
+	http.HandleFunc("/healthz", healthHandler(clientset))
 
 	// Register the /deployments/health route.
 	// deploymentsHealthHandler is a function that *returns* a handler function,
@@ -123,19 +127,243 @@ func startServer(listenAddr string, clientset kubernetes.Interface) error {
 	return http.ListenAndServe(listenAddr, nil)
 }
 
-// healthHandler responds with the health status of the application.
-// It is used by load balancers and orchestration systems to check if this
-// process is alive and accepting traffic. A 200 response means "I'm up".
-func healthHandler(w http.ResponseWriter, r *http.Request) {
-	// Write HTTP status 200 OK to the response.
-	w.WriteHeader(http.StatusOK)
+// HealthzStatus is the JSON response body returned by GET /healthz.
+// It reports whether the tool can successfully reach the Kubernetes API server.
+type HealthzStatus struct {
+	// Status is either "ok" (API reachable) or "degraded" (API unreachable).
+	Status string `json:"status"`
 
-	// Write the response body. w.Write returns the number of bytes written and
-	// an error — we only care about the error here.
-	_, err := w.Write([]byte("ok"))
-	if err != nil {
-		// We can't return an error to the caller from a handler, so we log it.
-		fmt.Println("failed writing to response")
+	// APIServer is either "reachable" or "unreachable".
+	APIServer string `json:"apiServer"`
+
+	// LatencyMs is the round-trip time of the API probe in milliseconds.
+	// It is 0 when the probe fails before a response is received.
+	LatencyMs int64 `json:"latencyMs"`
+
+	// Error contains the error message when the API is unreachable.
+	// It is omitted from the JSON output when empty.
+	Error string `json:"error,omitempty"`
+
+	// CheckedAt is the UTC timestamp when the probe was performed.
+	CheckedAt string `json:"checkedAt"`
+}
+
+// healthzHTMLTemplate is the HTML dashboard for GET /healthz?format=html.
+// It shows a large coloured status indicator, the probe latency, and the
+// timestamp of the last check. The page auto-refreshes every 10 seconds.
+var healthzHTMLTemplate = template.Must(template.New("healthz").Parse(`<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>API Server Health</title>
+	<meta http-equiv="refresh" content="10">
+	<style>
+		*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+			font-size: 16px;
+			color: #000;
+			background: #f5f5f5;
+			padding: 32px;
+		}
+
+		h1 {
+			font-size: 26px;
+			font-weight: 600;
+			margin-bottom: 24px;
+			color: #000;
+		}
+
+		/* ── Status card ────────────────────────────────────────────────────── */
+		.status-card {
+			background: #fff;
+			border: 1px solid #e0e0e0;
+			border-radius: 6px;
+			padding: 32px 40px;
+			display: inline-flex;
+			flex-direction: column;
+			gap: 20px;
+			margin-bottom: 28px;
+			min-width: 380px;
+		}
+
+		/* The large status indicator line */
+		.status-indicator {
+			display: flex;
+			align-items: center;
+			gap: 14px;
+			font-size: 24px;
+			font-weight: 700;
+		}
+
+		/* Coloured dot */
+		.dot {
+			width: 20px;
+			height: 20px;
+			border-radius: 50%;
+			flex-shrink: 0;
+		}
+		.dot.ok       { background: #16a34a; }
+		.dot.degraded { background: #dc2626; }
+
+		.status-text.ok       { color: #16a34a; }
+		.status-text.degraded { color: #dc2626; }
+
+		/* Detail rows below the indicator */
+		.detail-row {
+			display: flex;
+			gap: 12px;
+			font-size: 16px;
+			color: #000;
+		}
+
+		.detail-label {
+			font-weight: 600;
+			min-width: 100px;
+			color: #000;
+		}
+
+		.detail-value {
+			color: #000;
+		}
+
+		/* Error box — only shown when the API is unreachable */
+		.error-box {
+			background: #fef2f2;
+			border: 1px solid #fecaca;
+			border-radius: 4px;
+			padding: 12px 16px;
+			font-size: 15px;
+			color: #dc2626;
+			font-family: "Courier New", Consolas, monospace;
+			word-break: break-all;
+		}
+
+		/* ── Footer ─────────────────────────────────────────────────────────── */
+		.footer {
+			margin-top: 16px;
+			font-size: 16px;
+			font-weight: 500;
+			color: #000;
+		}
+
+		.footer a       { color: #000; font-weight: 600; text-decoration: none; }
+		.footer a:hover { text-decoration: underline; }
+	</style>
+</head>
+<body>
+
+<h1>API Server Health</h1>
+
+<div class="status-card">
+
+	{{ if eq .Status "ok" }}
+	<div class="status-indicator">
+		<div class="dot ok"></div>
+		<span class="status-text ok">API Server Reachable</span>
+	</div>
+	{{ else }}
+	<div class="status-indicator">
+		<div class="dot degraded"></div>
+		<span class="status-text degraded">API Server Unreachable</span>
+	</div>
+	{{ end }}
+
+	<div class="detail-row">
+		<span class="detail-label">Latency</span>
+		<span class="detail-value">{{ .LatencyMs }} ms</span>
+	</div>
+
+	<div class="detail-row">
+		<span class="detail-label">Checked at</span>
+		<span class="detail-value">{{ .CheckedAt }}</span>
+	</div>
+
+	{{ if .Error }}
+	<div class="error-box">{{ .Error }}</div>
+	{{ end }}
+
+</div>
+
+<p class="footer">
+	Auto-refreshes every 10s &mdash;
+	<a href="/healthz">JSON</a> &middot;
+	HTML
+</p>
+
+</body>
+</html>
+`))
+
+// healthHandler is a handler factory that returns an http.HandlerFunc.
+//
+// On every request it probes the Kubernetes API server by calling
+// clientset.Discovery().ServerVersion() — the same lightweight /version
+// endpoint used at startup. It measures the round-trip latency and returns:
+//
+//   - 200 OK + JSON/HTML  when the API server responds successfully
+//   - 503 Service Unavailable + JSON/HTML  when the API is unreachable
+//
+// The response format is selected via the ?format= query parameter:
+//   - ?format=html  → self-refreshing HTML dashboard
+//   - (default)     → machine-readable JSON
+func healthHandler(clientset kubernetes.Interface) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Record the time before the probe so we can calculate latency.
+		start := time.Now()
+
+		// Probe the Kubernetes API server.
+		// Discovery().ServerVersion() calls GET /version on the API server.
+		// This is the lightest authenticated call available — it returns a small
+		// JSON object with the cluster version and requires no list permissions.
+		_, err := clientset.Discovery().ServerVersion()
+
+		// Calculate how long the probe took in milliseconds.
+		latencyMs := time.Since(start).Milliseconds()
+
+		// Build the response based on whether the probe succeeded or failed.
+		var status HealthzStatus
+		var statusCode int
+
+		if err == nil {
+			// The API server responded — the tool is fully operational.
+			status = HealthzStatus{
+				Status:    "ok",
+				APIServer: "reachable",
+				LatencyMs: latencyMs,
+				CheckedAt: time.Now().UTC().Format(time.RFC3339),
+			}
+			statusCode = http.StatusOK // 200
+		} else {
+			// The API server did not respond — the tool cannot talk to Kubernetes.
+			status = HealthzStatus{
+				Status:    "degraded",
+				APIServer: "unreachable",
+				LatencyMs: 0,
+				Error:     err.Error(),
+				CheckedAt: time.Now().UTC().Format(time.RFC3339),
+			}
+			statusCode = http.StatusServiceUnavailable // 503
+		}
+
+		// Serve the response in the requested format.
+		if r.URL.Query().Get("format") == "html" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(statusCode)
+			if tmplErr := healthzHTMLTemplate.Execute(w, status); tmplErr != nil {
+				fmt.Printf("failed rendering healthz template: %v\n", tmplErr)
+			}
+			return
+		}
+
+		// Default: JSON response.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(statusCode)
+		if jsonErr := json.NewEncoder(w).Encode(status); jsonErr != nil {
+			fmt.Printf("failed encoding healthz JSON: %v\n", jsonErr)
+		}
 	}
 }
 

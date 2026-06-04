@@ -18,12 +18,11 @@ import (
 	// no deadline or cancellation to propagate.
 	"context"
 
+	// "fmt" is used in errorDiscovery.ServerVersion() to construct the error.
+	"fmt"
+
 	// "encoding/json" decodes the JSON response body in the handler tests.
 	"encoding/json"
-
-	// "io" provides io.ReadCloser, used when closing the HTTP response body,
-	// and io.ReadAll for reading the full body into a byte slice.
-	"io"
 
 	// Standard HTTP types and the httptest package for creating in-memory HTTP
 	// requests and response recorders — no real network needed.
@@ -47,6 +46,10 @@ import (
 	// disco is the fake implementation of the Kubernetes Discovery interface.
 	// It lets us set a pretend server version without a real cluster.
 	disco "k8s.io/client-go/discovery/fake"
+
+	// discovery is the interface implemented by all Discovery clients —
+	// used in errorClientset to satisfy the kubernetes.Interface contract.
+	"k8s.io/client-go/discovery"
 
 	// fake provides fake.NewSimpleClientset(), which returns an in-memory
 	// Kubernetes client pre-loaded with whatever objects we pass to it.
@@ -99,23 +102,23 @@ func TestHealthHandler(t *testing.T) {
 	// written to it so we can inspect the status code and body in assertions.
 	rec := httptest.NewRecorder()
 
-	// Call the handler directly — no HTTP server needed.
-	healthHandler(rec, req)
+	// healthHandler is now a factory — pass a fake clientset so it can probe
+	// the API, then call the returned handler with the request and recorder.
+	fakeClient := fake.NewSimpleClientset()
+	healthHandler(fakeClient)(rec, req)
 
 	// Result() converts the recorder into a standard *http.Response.
 	res := rec.Result()
+	defer res.Body.Close()
+
 	assert.Equal(t, http.StatusOK, res.StatusCode)
+	assert.Contains(t, res.Header.Get("Content-Type"), "application/json")
 
-	// Always close the response body when you're done — it's a good habit even
-	// with in-memory responses, and required by the http.Response contract.
-	defer func(Body io.ReadCloser) {
-		assert.NoError(t, Body.Close())
-	}(res.Body)
-
-	// Read the entire body as a byte slice, then compare as a string.
-	resp, err := io.ReadAll(res.Body)
+	var body HealthzStatus
+	err := json.NewDecoder(res.Body).Decode(&body)
 	assert.NoError(t, err)
-	assert.Equal(t, "ok", string(resp))
+	assert.Equal(t, "ok", body.Status)
+	assert.Equal(t, "reachable", body.APIServer)
 }
 
 // ---------------------------------------------------------------------------
@@ -389,4 +392,121 @@ func indexByName(statuses []DeploymentStatus) map[string]DeploymentStatus {
 		m[s.Name] = s
 	}
 	return m
+}
+
+// ---------------------------------------------------------------------------
+// /healthz handler tests
+// ---------------------------------------------------------------------------
+
+// TestHealthzHandler_APIReachable verifies that when the Kubernetes API server
+// responds successfully, the handler returns 200 OK with status "ok" in JSON.
+func TestHealthzHandler_APIReachable(t *testing.T) {
+	// The default fake clientset responds successfully to all calls,
+	// including Discovery().ServerVersion() — simulating a reachable API server.
+	fakeClient := fake.NewSimpleClientset()
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec := httptest.NewRecorder()
+
+	healthHandler(fakeClient)(rec, req)
+
+	res := rec.Result()
+	defer res.Body.Close()
+
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+	assert.Contains(t, res.Header.Get("Content-Type"), "application/json")
+
+	var body HealthzStatus
+	err := json.NewDecoder(res.Body).Decode(&body)
+	assert.NoError(t, err)
+	assert.Equal(t, "ok", body.Status)
+	assert.Equal(t, "reachable", body.APIServer)
+	assert.Empty(t, body.Error)
+}
+
+// TestHealthzHandler_HTML_200 verifies that ?format=html returns an HTML page
+// with status 200 when the API server is reachable.
+func TestHealthzHandler_HTML_200(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz?format=html", nil)
+	rec := httptest.NewRecorder()
+
+	healthHandler(fakeClient)(rec, req)
+
+	res := rec.Result()
+	defer res.Body.Close()
+
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+	assert.Contains(t, res.Header.Get("Content-Type"), "text/html")
+}
+
+// errorDiscovery is a minimal Discovery client that always returns an error
+// from ServerVersion(). It is used to simulate an unreachable API server in
+// tests without needing a real cluster or network call.
+//
+// It embeds disco.FakeDiscovery so that all other Discovery methods (which we
+// do not use in healthHandler) are available and do nothing harmful.
+type errorDiscovery struct {
+	*disco.FakeDiscovery
+}
+
+func (e *errorDiscovery) ServerVersion() (*version.Info, error) {
+	return nil, fmt.Errorf("dial tcp: connection refused")
+}
+
+// errorClientset wraps fake.Clientset and replaces its Discovery() method
+// with one that returns errorDiscovery. All other clientset methods are
+// inherited from the embedded fake and behave normally.
+type errorClientset struct {
+	*fake.Clientset
+}
+
+func (e *errorClientset) Discovery() discovery.DiscoveryInterface {
+	return &errorDiscovery{
+		FakeDiscovery: e.Clientset.Discovery().(*disco.FakeDiscovery),
+	}
+}
+
+// TestHealthzHandler_APIUnreachable verifies that when the Kubernetes API
+// server cannot be reached, the handler returns 503 with status "degraded".
+func TestHealthzHandler_APIUnreachable(t *testing.T) {
+	// errorClientset always returns an error from Discovery().ServerVersion(),
+	// simulating a cluster that is down or unreachable over the network.
+	client := &errorClientset{Clientset: fake.NewSimpleClientset()}
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec := httptest.NewRecorder()
+
+	healthHandler(client)(rec, req)
+
+	res := rec.Result()
+	defer res.Body.Close()
+
+	assert.Equal(t, http.StatusServiceUnavailable, res.StatusCode)
+	assert.Contains(t, res.Header.Get("Content-Type"), "application/json")
+
+	var body HealthzStatus
+	err := json.NewDecoder(res.Body).Decode(&body)
+	assert.NoError(t, err)
+	assert.Equal(t, "degraded", body.Status)
+	assert.Equal(t, "unreachable", body.APIServer)
+	assert.NotEmpty(t, body.Error)
+}
+
+// TestHealthzHandler_HTML_503 verifies that ?format=html returns 503 and an
+// HTML page when the Kubernetes API server cannot be reached.
+func TestHealthzHandler_HTML_503(t *testing.T) {
+	client := &errorClientset{Clientset: fake.NewSimpleClientset()}
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz?format=html", nil)
+	rec := httptest.NewRecorder()
+
+	healthHandler(client)(rec, req)
+
+	res := rec.Result()
+	defer res.Body.Close()
+
+	assert.Equal(t, http.StatusServiceUnavailable, res.StatusCode)
+	assert.Contains(t, res.Header.Get("Content-Type"), "text/html")
 }
