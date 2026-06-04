@@ -21,7 +21,8 @@ import (
 	// "encoding/json" decodes the JSON response body in the handler tests.
 	"encoding/json"
 
-	// "io" provides io.ReadCloser, used when closing the HTTP response body.
+	// "io" provides io.ReadCloser, used when closing the HTTP response body,
+	// and io.ReadAll for reading the full body into a byte slice.
 	"io"
 
 	// Standard HTTP types and the httptest package for creating in-memory HTTP
@@ -175,7 +176,7 @@ func TestGetDeploymentsHealth_NoDeployments(t *testing.T) {
 // when every deployment has all its requested replicas ready.
 func TestGetDeploymentsHealth_AllHealthy(t *testing.T) {
 	// Two deployments in different namespaces, both fully ready.
-	d1 := makeDeployment("default", "api", 3, 3)         // 3 desired, 3 ready
+	d1 := makeDeployment("default", "api", 3, 3)          // 3 desired, 3 ready
 	d2 := makeDeployment("monitoring", "prometheus", 1, 1) // 1 desired, 1 ready
 
 	// Pass both deployments to the fake clientset so they are returned when listed.
@@ -253,12 +254,12 @@ func TestGetDeploymentsHealth_MultiNamespace(t *testing.T) {
 	report, err := getDeploymentsHealth(context.Background(), clientset)
 
 	require.NoError(t, err)
-	assert.False(t, report.AllHealthy)          // backend is down
-	assert.Len(t, report.Deployments, 2)         // both namespaces present
+	assert.False(t, report.AllHealthy)         // backend is down
+	assert.Len(t, report.Deployments, 2)       // both namespaces present
 }
 
 // ---------------------------------------------------------------------------
-// Tests for deploymentsHealthHandler (the HTTP layer)
+// Tests for deploymentsHealthHandler — JSON format (default)
 // ---------------------------------------------------------------------------
 
 // TestDeploymentsHealthHandler_AllHealthy verifies that the HTTP handler returns
@@ -329,6 +330,50 @@ func TestDeploymentsHealthHandler_NoDeployments(t *testing.T) {
 	require.NoError(t, json.NewDecoder(res.Body).Decode(&report))
 	assert.True(t, report.AllHealthy)
 	assert.Empty(t, report.Deployments)
+}
+
+// ---------------------------------------------------------------------------
+// Tests for deploymentsHealthHandler — HTML format (?format=html)
+// ---------------------------------------------------------------------------
+
+// TestDeploymentsHealthHandler_HTML_200 verifies that ?format=html returns HTTP 200
+// and a text/html Content-Type when all deployments are healthy.
+// We do not inspect the HTML body — that is presentation logic belonging to the
+// template, not business logic that belongs in unit tests.
+func TestDeploymentsHealthHandler_HTML_200(t *testing.T) {
+	d := makeDeployment("default", "api", 2, 2) // fully ready
+	clientset := fake.NewSimpleClientset(&d)
+
+	// ?format=html triggers the HTML rendering path instead of JSON.
+	req := httptest.NewRequest(http.MethodGet, "/deployments/health?format=html", nil)
+	rec := httptest.NewRecorder()
+
+	deploymentsHealthHandler(clientset)(rec, req)
+
+	res := rec.Result()
+	defer res.Body.Close()
+
+	assert.Equal(t, http.StatusOK, res.StatusCode)
+	assert.Contains(t, res.Header.Get("Content-Type"), "text/html")
+}
+
+// TestDeploymentsHealthHandler_HTML_503 verifies that ?format=html returns HTTP 503
+// and a text/html Content-Type when a deployment is degraded.
+// The same status-code rules apply regardless of whether the format is JSON or HTML.
+func TestDeploymentsHealthHandler_HTML_503(t *testing.T) {
+	d := makeDeployment("sre-test", "broken-app", 9, 4) // 9 desired, only 4 ready
+	clientset := fake.NewSimpleClientset(&d)
+
+	req := httptest.NewRequest(http.MethodGet, "/deployments/health?format=html", nil)
+	rec := httptest.NewRecorder()
+
+	deploymentsHealthHandler(clientset)(rec, req)
+
+	res := rec.Result()
+	defer res.Body.Close()
+
+	assert.Equal(t, http.StatusServiceUnavailable, res.StatusCode)
+	assert.Contains(t, res.Header.Get("Content-Type"), "text/html")
 }
 
 // ---------------------------------------------------------------------------

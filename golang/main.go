@@ -18,6 +18,11 @@ import (
 	// "fmt" is the standard formatting package — used for Printf, Sprintf, Errorf.
 	"fmt"
 
+	// "html/template" renders HTML pages safely from Go structs.
+	// It automatically escapes values inserted into the HTML to prevent
+	// cross-site scripting (XSS) attacks.
+	"html/template"
+
 	// "net/http" is Go's built-in HTTP server library.
 	"net/http"
 
@@ -109,6 +114,7 @@ func startServer(listenAddr string, clientset kubernetes.Interface) error {
 	// Register the /deployments/health route.
 	// deploymentsHealthHandler is a function that *returns* a handler function,
 	// so we call it here (with the clientset) to get the actual handler.
+	// This single handler serves both JSON and HTML depending on ?format=html.
 	http.HandleFunc("/deployments/health", deploymentsHealthHandler(clientset))
 
 	fmt.Printf("Server listening on %s\n", listenAddr)
@@ -240,10 +246,15 @@ func getDeploymentsHealth(ctx context.Context, clientset kubernetes.Interface) (
 // This pattern is used when a handler needs access to something that is created
 // once at startup (the clientset) but used on every request.
 //
-// Response codes:
-//   - 200 OK                    – every deployment has all pods ready (or there are none)
-//   - 503 Service Unavailable   – one or more deployments are degraded
-//   - 500 Internal Server Error – the Kubernetes API could not be reached
+// The handler supports three response formats selected via the ?format= query parameter:
+//   - ?format=html   ->  card + badge dashboard, auto-refreshes every 10s
+//   - ?format=table  ->  Excel-style spreadsheet grid, auto-refreshes every 10s
+//   - (default)      ->  machine-readable JSON (used by scripts, monitoring tools, etc.)
+//
+// HTTP status codes:
+//   - 200 OK                    -- every deployment has all pods ready (or there are none)
+//   - 503 Service Unavailable   -- one or more deployments are degraded
+//   - 500 Internal Server Error -- the Kubernetes API could not be reached
 func deploymentsHealthHandler(clientset kubernetes.Interface) http.HandlerFunc {
 	// The function we return is the actual HTTP handler.
 	// Go closures "capture" variables from the surrounding scope,
@@ -258,22 +269,599 @@ func deploymentsHealthHandler(clientset kubernetes.Interface) http.HandlerFunc {
 			return // stop processing this request
 		}
 
-		// Tell the client the response body is JSON.
-		w.Header().Set("Content-Type", "application/json")
-
-		// Write the appropriate HTTP status code before writing the body.
-		// (Headers must be written before the body in HTTP.)
-		if report.AllHealthy {
-			w.WriteHeader(http.StatusOK) // 200
-		} else {
-			w.WriteHeader(http.StatusServiceUnavailable) // 503
+		// Determine the HTTP status code based on cluster health.
+		// We compute this once here and reuse it across all three format branches.
+		statusCode := http.StatusOK // 200
+		if !report.AllHealthy {
+			statusCode = http.StatusServiceUnavailable // 503
 		}
 
-		// Encode the report struct as JSON and write it directly to the response writer.
-		// json.NewEncoder(w).Encode() is more efficient than json.Marshal + w.Write
-		// because it streams directly without an intermediate buffer.
-		if err := json.NewEncoder(w).Encode(report); err != nil {
-			fmt.Println("failed writing deployments health response")
+		// r.URL.Query().Get("format") reads the ?format= query parameter from the URL.
+		// For example: /deployments/health?format=html  -> "html"
+		//              /deployments/health?format=table -> "table"
+		//              /deployments/health              -> ""
+		switch r.URL.Query().Get("format") {
+		case "html":
+			// Card + badge dashboard view.
+			renderHTML(w, report, statusCode)
+		case "table":
+			// Excel-style spreadsheet grid view.
+			renderTable(w, report, statusCode)
+		default:
+			// Machine-readable JSON -- the default when no format is specified.
+			renderJSON(w, report, statusCode)
 		}
+	}
+}
+
+// renderJSON writes the deployment health report as a JSON response.
+// It is called when the request does NOT include ?format=html.
+func renderJSON(w http.ResponseWriter, report *DeploymentsHealthReport, statusCode int) {
+	// Tell the client the response body is JSON.
+	w.Header().Set("Content-Type", "application/json")
+
+	// Write the HTTP status code. Headers must be written before the body.
+	w.WriteHeader(statusCode)
+
+	// Encode the report struct as JSON and stream it directly to the response writer.
+	// json.NewEncoder(w).Encode() is more efficient than json.Marshal + w.Write
+	// because it avoids an intermediate in-memory buffer.
+	if err := json.NewEncoder(w).Encode(report); err != nil {
+		fmt.Println("failed writing JSON response")
+	}
+}
+
+// htmlTemplateData is the data we pass into the HTML template.
+// html/template fills in the {{ .Field }} placeholders using this struct.
+// We compute the summary counts here so the template stays simple —
+// templates should display data, not calculate it.
+type htmlTemplateData struct {
+	// Deployments is the full list of deployment statuses to render as table rows.
+	Deployments []DeploymentStatus
+
+	// Total is the total number of deployments across all namespaces.
+	Total int
+
+	// HealthyCount is the number of deployments with all replicas ready.
+	HealthyCount int
+
+	// DegradedCount is the number of deployments that are not fully ready.
+	DegradedCount int
+}
+
+// htmlTemplate is the HTML page template. It is defined as a raw string literal
+// (backtick-quoted) so we don't need a separate file.
+//
+// html/template syntax:
+//   {{ .Field }}         inserts the value of Field from the data struct (auto-escaped)
+//   {{ range .Slice }}   loops over a slice; inside the loop, . refers to the current element
+//   {{ if .Bool }}       conditional block
+//   {{ end }}            closes a range or if block
+var htmlTemplate = template.Must(template.New("dashboard").Parse(`<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Deployment Health</title>
+
+	<!--
+		The <meta http-equiv="refresh"> tag makes the browser reload the page
+		automatically every 10 seconds. This is the simplest way to keep the
+		dashboard up to date without writing any JavaScript.
+	-->
+	<meta http-equiv="refresh" content="10">
+
+	<style>
+		/* ── Reset & base ───────────────────────────────────────────────────── */
+		*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+			/* Base font size increased to 16px for better legibility throughout. */
+			font-size: 16px;
+			/* Default text is pure black — overrides are applied only where colour is needed. */
+			color: #000;
+			background: #f5f5f5;
+			padding: 32px;
+		}
+
+		/* ── Page title ─────────────────────────────────────────────────────── */
+		h1 {
+			font-size: 26px;
+			font-weight: 600;
+			margin-bottom: 24px;
+			/* Title is black — no override needed, inherits from body. */
+			color: #000;
+		}
+
+		/* ── Summary cards ──────────────────────────────────────────────────── */
+
+		/* The three cards sit side by side using flexbox. */
+		.cards {
+			display: flex;
+			gap: 16px;
+			margin-bottom: 28px;
+		}
+
+		.card {
+			background: #fff;
+			border: 1px solid #e0e0e0;
+			border-radius: 6px;
+			padding: 20px 28px;
+			min-width: 120px;
+		}
+
+		/* The small uppercase label above the number — kept black, slightly larger than before. */
+		.card-label {
+			font-size: 13px;
+			font-weight: 600;
+			letter-spacing: 0.08em;
+			text-transform: uppercase;
+			/* Black instead of the previous grey #888. */
+			color: #000;
+			margin-bottom: 8px;
+		}
+
+		/* The large number in each card. */
+		.card-value {
+			font-size: 36px;
+			font-weight: 700;
+			line-height: 1;
+			/* Default card number (Total) is black. */
+			color: #000;
+		}
+
+		/* The Healthy count stays green and the Degraded count stays orange —
+		   these are the only two numbers that are NOT black, by design. */
+		.card-value.healthy  { color: #2d9e5f; }
+		.card-value.degraded { color: #d97706; }
+
+		/* ── Data table ─────────────────────────────────────────────────────── */
+		.table-wrapper {
+			background: #fff;
+			border: 1px solid #e0e0e0;
+			border-radius: 6px;
+			overflow: hidden; /* clips the rounded corners around the table */
+		}
+
+		table {
+			width: 100%;
+			border-collapse: collapse; /* removes double borders between cells */
+		}
+
+		/* Header row — labels are black, slightly larger than before. */
+		thead th {
+			padding: 14px 20px;
+			text-align: left;
+			font-size: 13px;
+			font-weight: 700;
+			letter-spacing: 0.07em;
+			text-transform: uppercase;
+			/* Black instead of the previous grey #888. */
+			color: #000;
+			border-bottom: 1px solid #e0e0e0;
+		}
+
+		/* Right-align the numeric columns. */
+		thead th.num,
+		tbody td.num {
+			text-align: right;
+		}
+
+		/* Body rows — increased padding and font size for better readability.
+		   All cell text is black. */
+		tbody td {
+			padding: 16px 20px;
+			font-size: 16px;
+			border-bottom: 1px solid #f0f0f0;
+			/* Black instead of the previous dark grey #333. */
+			color: #000;
+		}
+
+		/* Remove the border from the very last row. */
+		tbody tr:last-child td { border-bottom: none; }
+
+		/* Subtle highlight when hovering a row. */
+		tbody tr:hover { background: #fafafa; }
+
+		/* Orange text for the ready count when a deployment is degraded.
+		   This is the only table cell that is NOT black — it signals a problem. */
+		.ready-degraded { color: #d97706; font-weight: 600; }
+
+		/* ── Status badges ──────────────────────────────────────────────────── */
+
+		/* Base badge style — a small pill shape.
+		   Font size is unchanged from the original design as requested. */
+		.badge {
+			display: inline-flex;
+			align-items: center;
+			gap: 6px;
+			padding: 4px 12px;
+			border-radius: 999px; /* fully rounded ends */
+			font-size: 13px;
+			font-weight: 500;
+		}
+
+		/* The coloured dot before the label text. */
+		.badge::before {
+			content: "●";
+			font-size: 8px;
+		}
+
+		/* Green badge for healthy deployments — colour kept as-is. */
+		.badge.healthy {
+			background: #dcfce7;
+			color: #16a34a;
+		}
+
+		/* Orange badge for degraded deployments — colour kept as-is. */
+		.badge.degraded {
+			background: #fef3c7;
+			color: #d97706;
+		}
+
+		/* ── Footer ─────────────────────────────────────────────────────────── */
+		.footer {
+			margin-top: 16px;
+			font-size: 16px;
+			font-weight: 500;
+			color: #000;
+		}
+
+		/* Links in the footer (JSON / Table). */
+		.footer a {
+			color: #000;
+			font-weight: 600;
+			text-decoration: none;
+		}
+		.footer a:hover { text-decoration: underline; }
+	</style>
+</head>
+<body>
+
+<h1>Deployment Health</h1>
+
+<!-- Summary cards -->
+<div class="cards">
+	<div class="card">
+		<div class="card-label">Total</div>
+		<div class="card-value">{{ .Total }}</div>
+	</div>
+	<div class="card">
+		<div class="card-label">Healthy</div>
+		<div class="card-value healthy">{{ .HealthyCount }}</div>
+	</div>
+	<div class="card">
+		<div class="card-label">Degraded</div>
+		<div class="card-value degraded">{{ .DegradedCount }}</div>
+	</div>
+</div>
+
+<!-- Deployments table -->
+<div class="table-wrapper">
+	<table>
+		<thead>
+			<tr>
+				<th>Namespace</th>
+				<th>Name</th>
+				<th class="num">Desired</th>
+				<th class="num">Ready</th>
+				<th>Status</th>
+			</tr>
+		</thead>
+		<tbody>
+			{{ range .Deployments }}
+			<tr>
+				<td>{{ .Namespace }}</td>
+				<td>{{ .Name }}</td>
+				<td class="num">{{ .DesiredReplicas }}</td>
+				{{ if .Healthy }}
+				<td class="num">{{ .ReadyReplicas }}</td>
+				<td><span class="badge healthy">Healthy</span></td>
+				{{ else }}
+				<td class="num ready-degraded">{{ .ReadyReplicas }}</td>
+				<td><span class="badge degraded">Degraded</span></td>
+				{{ end }}
+			</tr>
+			{{ end }}
+		</tbody>
+	</table>
+</div>
+
+<!-- Footer with refresh notice and links to switch between views.
+     The current view (HTML) is shown as plain text, not a link. -->
+<p class="footer">
+	Auto-refreshes every 10s &mdash;
+	<a href="/deployments/health">JSON</a> &middot;
+	HTML &middot;
+	<a href="/deployments/health?format=table">Table</a>
+</p>
+
+</body>
+</html>
+`))
+
+// renderHTML writes the deployment health report as a self-refreshing HTML page.
+// It is called when the request includes ?format=html.
+//
+// Steps:
+//  1. Count healthy and degraded deployments for the summary cards.
+//  2. Build the htmlTemplateData struct with those counts.
+//  3. Write the HTTP status code and Content-Type header.
+//  4. Execute the HTML template, which fills in the placeholders and writes
+//     the finished HTML directly to the response writer.
+func renderHTML(w http.ResponseWriter, report *DeploymentsHealthReport, statusCode int) {
+	// Count how many deployments are healthy so we can show it in the summary card.
+	healthyCount := 0
+	for _, d := range report.Deployments {
+		if d.Healthy {
+			healthyCount++
+		}
+	}
+
+	// Build the data object the template will use.
+	// DegradedCount is derived from Total minus HealthyCount.
+	data := htmlTemplateData{
+		Deployments:   report.Deployments,
+		Total:         len(report.Deployments),
+		HealthyCount:  healthyCount,
+		DegradedCount: len(report.Deployments) - healthyCount,
+	}
+
+	// Tell the browser this is an HTML page, not plain text or JSON.
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	// Write the HTTP status code before writing the body.
+	w.WriteHeader(statusCode)
+
+	// Execute the template: fill in all {{ }} placeholders using `data`
+	// and write the resulting HTML directly to the response writer w.
+	// If rendering fails (e.g. a bug in the template), log it — we can't
+	// send a new status code at this point because WriteHeader was already called.
+	if err := htmlTemplate.Execute(w, data); err != nil {
+		fmt.Printf("failed rendering HTML template: %v\n", err)
+	}
+}
+
+// tableTemplate is the Excel-style spreadsheet view, served at ?format=table.
+//
+// Key visual differences from the HTML dashboard:
+//   - Every cell has a border on all four sides — mimicking a spreadsheet grid
+//   - The header row has a grey background, like a frozen header row in Excel
+//   - Rows alternate between white and very light grey for readability
+//   - Numeric columns use a monospace font so digits line up vertically
+//   - The STATUS column shows plain text (Healthy / Degraded) instead of pill badges
+//   - The footer shows "Table" as plain text (current view) and links to JSON and HTML
+var tableTemplate = template.Must(template.New("spreadsheet").Parse(`<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Deployment Health</title>
+	<meta http-equiv="refresh" content="10">
+	<style>
+		/* ── Reset & base ───────────────────────────────────────────────────── */
+		*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+			font-size: 16px;
+			color: #000;
+			background: #f5f5f5;
+			padding: 32px;
+		}
+
+		/* ── Page title ─────────────────────────────────────────────────────── */
+		h1 {
+			font-size: 26px;
+			font-weight: 600;
+			margin-bottom: 24px;
+			color: #000;
+		}
+
+		/* ── Summary cards — identical to the HTML dashboard ────────────────── */
+		.cards {
+			display: flex;
+			gap: 16px;
+			margin-bottom: 28px;
+		}
+
+		.card {
+			background: #fff;
+			border: 1px solid #e0e0e0;
+			border-radius: 6px;
+			padding: 20px 28px;
+			min-width: 120px;
+		}
+
+		.card-label {
+			font-size: 13px;
+			font-weight: 600;
+			letter-spacing: 0.08em;
+			text-transform: uppercase;
+			color: #000;
+			margin-bottom: 8px;
+		}
+
+		.card-value        { font-size: 36px; font-weight: 700; line-height: 1; color: #000; }
+		.card-value.healthy  { color: #2d9e5f; }
+		.card-value.degraded { color: #d97706; }
+
+		/* ── Spreadsheet table ──────────────────────────────────────────────── */
+
+		/* The outer wrapper has no rounded corners — spreadsheets are flat and boxy. */
+		.table-wrapper {
+			background: #fff;
+			border: 2px solid #bbb; /* slightly thicker outer border, like a sheet boundary */
+		}
+
+		table {
+			width: 100%;
+			/* collapse: adjacent cell borders merge into one line, giving the grid look. */
+			border-collapse: collapse;
+		}
+
+		/* Header row — grey background with bold black text, like a frozen Excel header. */
+		thead th {
+			padding: 12px 16px;
+			text-align: left;
+			font-size: 13px;
+			font-weight: 700;
+			letter-spacing: 0.07em;
+			text-transform: uppercase;
+			color: #000;
+			background: #e8e8e8; /* light grey — the classic Excel column header colour */
+			/* Every edge of every header cell gets a border. */
+			border: 1px solid #bbb;
+		}
+
+		/* Right-align the numeric columns — digits line up like in a spreadsheet. */
+		thead th.num,
+		tbody td.num {
+			text-align: right;
+		}
+
+		/* Body cells — full border on all four sides creates the grid. */
+		tbody td {
+			padding: 12px 16px;
+			font-size: 16px;
+			color: #000;
+			border: 1px solid #d0d0d0; /* slightly lighter than the header borders */
+		}
+
+		/* Monospace font for the DESIRED and READY columns so numbers align vertically,
+		   exactly like a spreadsheet's number cells. */
+		tbody td.num {
+			font-family: "Courier New", Consolas, monospace;
+			font-size: 15px;
+		}
+
+		/* Alternating row shading — every even row gets a very pale grey background.
+		   This is the most recognisable visual pattern of a spreadsheet. */
+		tbody tr:nth-child(even) { background: #f7f7f7; }
+		tbody tr:nth-child(odd)  { background: #ffffff; }
+
+		/* Subtle highlight on hover so the user can track which row they are on. */
+		tbody tr:hover { background: #eef4ff; }
+
+		/* Orange text for the READY count when a deployment is degraded. */
+		.ready-degraded {
+			color: #d97706;
+			font-weight: 700;
+		}
+
+		/* Plain-text status — no pill badge, just coloured text like a cell value. */
+		.status-healthy  { color: #16a34a; font-weight: 600; }
+		.status-degraded { color: #d97706; font-weight: 700; }
+
+		/* ── Footer ─────────────────────────────────────────────────────────── */
+		.footer {
+			margin-top: 16px;
+			font-size: 16px;
+			font-weight: 500;
+			color: #000;
+		}
+
+		.footer a          { color: #000; font-weight: 600; text-decoration: none; }
+		.footer a:hover    { text-decoration: underline; }
+
+		/* The active view label is bold and not a link. */
+		.footer .active    { font-weight: 700; }
+	</style>
+</head>
+<body>
+
+<h1>Deployment Health</h1>
+
+<!-- Summary cards — same as the HTML dashboard -->
+<div class="cards">
+	<div class="card">
+		<div class="card-label">Total</div>
+		<div class="card-value">{{ .Total }}</div>
+	</div>
+	<div class="card">
+		<div class="card-label">Healthy</div>
+		<div class="card-value healthy">{{ .HealthyCount }}</div>
+	</div>
+	<div class="card">
+		<div class="card-label">Degraded</div>
+		<div class="card-value degraded">{{ .DegradedCount }}</div>
+	</div>
+</div>
+
+<!-- Spreadsheet table -->
+<div class="table-wrapper">
+	<table>
+		<thead>
+			<tr>
+				<th>Namespace</th>
+				<th>Name</th>
+				<th class="num">Desired</th>
+				<th class="num">Ready</th>
+				<th>Status</th>
+			</tr>
+		</thead>
+		<tbody>
+			{{ range .Deployments }}
+			<tr>
+				<td>{{ .Namespace }}</td>
+				<td>{{ .Name }}</td>
+				<td class="num">{{ .DesiredReplicas }}</td>
+				{{ if .Healthy }}
+				<td class="num">{{ .ReadyReplicas }}</td>
+				<td class="status-healthy">Healthy</td>
+				{{ else }}
+				<td class="num ready-degraded">{{ .ReadyReplicas }}</td>
+				<td class="status-degraded">Degraded</td>
+				{{ end }}
+			</tr>
+			{{ end }}
+		</tbody>
+	</table>
+</div>
+
+<!-- Footer — "Table" is the current active view so it is plain text, not a link. -->
+<p class="footer">
+	Auto-refreshes every 10s &mdash;
+	<a href="/deployments/health">JSON</a> &middot;
+	<a href="/deployments/health?format=html">HTML</a> &middot;
+	<span class="active">Table</span>
+</p>
+
+</body>
+</html>
+`))
+
+// renderTable writes the deployment health report as an Excel-style HTML table.
+// It is called when the request includes ?format=table.
+//
+// It reuses the same htmlTemplateData struct as renderHTML because both views
+// need exactly the same data: the deployment list plus the three summary counts.
+func renderTable(w http.ResponseWriter, report *DeploymentsHealthReport, statusCode int) {
+	// Count healthy deployments for the summary cards — same logic as renderHTML.
+	healthyCount := 0
+	for _, d := range report.Deployments {
+		if d.Healthy {
+			healthyCount++
+		}
+	}
+
+	// Build the template data struct — identical shape to the HTML dashboard data.
+	data := htmlTemplateData{
+		Deployments:   report.Deployments,
+		Total:         len(report.Deployments),
+		HealthyCount:  healthyCount,
+		DegradedCount: len(report.Deployments) - healthyCount,
+	}
+
+	// Tell the browser this is an HTML page.
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+
+	// Write the status code before the body — HTTP requires headers first.
+	w.WriteHeader(statusCode)
+
+	// Render the spreadsheet template into the response writer.
+	if err := tableTemplate.Execute(w, data); err != nil {
+		fmt.Printf("failed rendering table template: %v\n", err)
 	}
 }
