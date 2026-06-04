@@ -65,7 +65,11 @@ RUN apk --no-cache add ca-certificates
 # Running as root inside a container is a security risk — if an attacker
 # escapes the container, they land as root on the host. A dedicated user
 # limits the blast radius.
-RUN addgroup -S sregroup && adduser -S sreuser -G sregroup
+#
+# We assign an explicit numeric UID (1001) and GID (1001).
+# Kubernetes enforces runAsNonRoot by checking the numeric UID — it cannot
+# verify a named user like "sreuser" is non-root, so a numeric ID is required.
+RUN addgroup -S -g 1001 sregroup && adduser -S -u 1001 -G sregroup sreuser
 
 # Copy only the compiled binary from Stage 1 into this minimal image.
 # --from=builder references the first stage by its AS name.

@@ -41,10 +41,12 @@ spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
 
       # Security context for the entire pod.
-      # runAsNonRoot ensures Kubernetes rejects the pod if the image tries
-      # to run as root, adding a second layer of defence.
+      # runAsNonRoot ensures Kubernetes rejects the pod if the container runs as root.
+      # runAsUser/runAsGroup must be numeric — Kubernetes cannot verify named users.
       securityContext:
         runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
 
       containers:
         - name: {{ .Chart.Name }}
