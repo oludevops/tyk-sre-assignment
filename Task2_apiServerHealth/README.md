@@ -74,6 +74,7 @@ The `checkedAt` field is always UTC. The `error` field is omitted from the JSON 
 
 `http://localhost:8080/healthz?format=html`
 
+![API Server Health dashboard showing a green dot, API Server Reachable, latency 8ms and checked at timestamp](api_service.png)
 
 The dashboard shows:
 - A large **green dot** and "API Server Reachable" when the probe succeeds
@@ -109,7 +110,7 @@ The unreachable tests use a custom `errorClientset` that wraps the fake clientse
 ## Running the Tests
 
 ```bash
-cd golang
+cd ~/tyk-sre-assignment/golang
 go test ./... -v
 ```
 
