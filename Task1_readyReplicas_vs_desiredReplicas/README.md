@@ -43,10 +43,19 @@ The same status code rules apply regardless of which format is requested.
 ## Running the Tool
 
 ```bash
-cd golang/Task1_readyReplicas_vs_desiredReplicas
+cd ~/tyk-sre-assignment/golang
 
 # Against an external cluster
+# In the first terminal run the command below. This will connect to the Kubernetes cluster on port 8080.
 go run main.go --kubeconfig ~/.kube/config
+
+# Deployment health — JSON
+# Open a second terminal and run
+curl -s http://localhost:8080/deployments/health | jq .
+
+# In a browser run
+http://localhost:8080/deployments/health?format=html
+http://localhost:8080/deployments/health?format=table
 
 # Inside the cluster (uses pod service-account token automatically)
 go run main.go
@@ -155,11 +164,11 @@ The dashboard shows:
 ## Running the Tests
 
 ```bash
-cd golang/Task1_readyReplicas_vs_desiredReplicas
+cd cd ~/tyk-sre-assignment/golang
 go test ./... -v
 ```
 ---
-## Fake in-memory
+## In-memory test result
 
 ```
 === RUN   TestGetKubernetesVersion
