@@ -1,6 +1,6 @@
 # Task 1 — Deployment Health Check
 
-> **As an SRE I want to know whether all the deployments in the k8s cluster have as many healthy pods as requested by the respective `Deployment` spec.**
+**As an SRE I want to know whether all the deployments in the k8s cluster have as many healthy pods as requested by the respective `Deployment` spec.**
 
 ---
 
@@ -113,6 +113,57 @@ curl -s http://192.168.49.2:30318/healthz | jq .
 ```
 
 The warning `Neither --kubeconfig nor --master was specified` in the logs is harmless — it is `client-go` confirming it detected the in-cluster token and is using it.
+
+---
+
+### Inside the cluster — AWS EKS
+
+The default service type is `LoadBalancer`. On EKS this automatically provisions an AWS Load Balancer with a public DNS name — no security group changes or VPN access required.
+
+> All `helm` commands must be run from the repo root (`~/tyk-sre-assignment`).
+
+```bash
+cd ~/tyk-sre-assignment
+
+# Point kubectl at your EKS cluster
+aws eks update-kubeconfig --region <your-region> --name <your-cluster-name>
+
+# Check if already installed
+helm list
+
+# First time install (LoadBalancer is the default — no override needed)
+helm install sre-tool ./helm/sre-tool
+
+# Already installed — upgrade instead
+helm upgrade sre-tool ./helm/sre-tool
+
+# Wait for the pod to be ready
+kubectl get pods -w -l app.kubernetes.io/name=sre-tool
+
+# Check the logs to confirm it connected to the cluster
+kubectl logs -l app.kubernetes.io/name=sre-tool
+# Expected output:
+# Connected to Kubernetes v1.x.x
+# Server listening on :8080
+
+# Get the public DNS name assigned by AWS.
+# The EXTERNAL-IP column shows the load balancer address.
+# This may take 1-2 minutes to appear while AWS provisions the load balancer.
+kubectl get svc sre-tool
+```
+
+Once `EXTERNAL-IP` is populated:
+
+```bash
+# JSON endpoints
+curl -s http://<EXTERNAL-IP>:8080/healthz | jq .
+curl -s http://<EXTERNAL-IP>:8080/deployments/health | jq .
+
+# Browser — accessible from any machine including Windows
+http://<EXTERNAL-IP>:8080/deployments/health?format=html
+http://<EXTERNAL-IP>:8080/deployments/health?format=table
+http://<EXTERNAL-IP>:8080/healthz?format=html
+```
 
 ---
 
