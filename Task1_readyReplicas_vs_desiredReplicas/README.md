@@ -57,41 +57,6 @@ go run main.go --kubeconfig ~/.kube/config --address :9090
 
 ---
 
-## Test Results
-
-```
-=== RUN   TestGetKubernetesVersion
---- PASS: TestGetKubernetesVersion (0.00s)
-=== RUN   TestHealthHandler
---- PASS: TestHealthHandler (0.00s)
-=== RUN   TestGetDeploymentsHealth_NoDeployments
---- PASS: TestGetDeploymentsHealth_NoDeployments (0.00s)
-=== RUN   TestGetDeploymentsHealth_AllHealthy
---- PASS: TestGetDeploymentsHealth_AllHealthy (0.00s)
-=== RUN   TestGetDeploymentsHealth_PartiallyUnhealthy
---- PASS: TestGetDeploymentsHealth_PartiallyUnhealthy (0.00s)
-=== RUN   TestGetDeploymentsHealth_ZeroDesiredReplicas
---- PASS: TestGetDeploymentsHealth_ZeroDesiredReplicas (0.00s)
-=== RUN   TestGetDeploymentsHealth_MultiNamespace
---- PASS: TestGetDeploymentsHealth_MultiNamespace (0.00s)
-=== RUN   TestDeploymentsHealthHandler_AllHealthy
---- PASS: TestDeploymentsHealthHandler_AllHealthy (0.00s)
-=== RUN   TestDeploymentsHealthHandler_Unhealthy
---- PASS: TestDeploymentsHealthHandler_Unhealthy (0.00s)
-=== RUN   TestDeploymentsHealthHandler_NoDeployments
---- PASS: TestDeploymentsHealthHandler_NoDeployments (0.00s)
-=== RUN   TestDeploymentsHealthHandler_HTML_200
---- PASS: TestDeploymentsHealthHandler_HTML_200 (0.00s)
-=== RUN   TestDeploymentsHealthHandler_HTML_503
---- PASS: TestDeploymentsHealthHandler_HTML_503 (0.00s)
-PASS
-ok      github.com/TykTechnologies/tyk-sre-assignment   0.135s
-```
-
-All 12 tests run against a **fake in-memory Kubernetes client** — no cluster is required.
-
----
-
 ## Live Output — JSON
 
 ```bash
@@ -193,7 +158,39 @@ The dashboard shows:
 cd golang/Task1_readyReplicas_vs_desiredReplicas
 go test ./... -v
 ```
+---
+## Fake in-memory
 
+```
+=== RUN   TestGetKubernetesVersion
+--- PASS: TestGetKubernetesVersion (0.00s)
+=== RUN   TestHealthHandler
+--- PASS: TestHealthHandler (0.00s)
+=== RUN   TestGetDeploymentsHealth_NoDeployments
+--- PASS: TestGetDeploymentsHealth_NoDeployments (0.00s)
+=== RUN   TestGetDeploymentsHealth_AllHealthy
+--- PASS: TestGetDeploymentsHealth_AllHealthy (0.00s)
+=== RUN   TestGetDeploymentsHealth_PartiallyUnhealthy
+--- PASS: TestGetDeploymentsHealth_PartiallyUnhealthy (0.00s)
+=== RUN   TestGetDeploymentsHealth_ZeroDesiredReplicas
+--- PASS: TestGetDeploymentsHealth_ZeroDesiredReplicas (0.00s)
+=== RUN   TestGetDeploymentsHealth_MultiNamespace
+--- PASS: TestGetDeploymentsHealth_MultiNamespace (0.00s)
+=== RUN   TestDeploymentsHealthHandler_AllHealthy
+--- PASS: TestDeploymentsHealthHandler_AllHealthy (0.00s)
+=== RUN   TestDeploymentsHealthHandler_Unhealthy
+--- PASS: TestDeploymentsHealthHandler_Unhealthy (0.00s)
+=== RUN   TestDeploymentsHealthHandler_NoDeployments
+--- PASS: TestDeploymentsHealthHandler_NoDeployments (0.00s)
+=== RUN   TestDeploymentsHealthHandler_HTML_200
+--- PASS: TestDeploymentsHealthHandler_HTML_200 (0.00s)
+=== RUN   TestDeploymentsHealthHandler_HTML_503
+--- PASS: TestDeploymentsHealthHandler_HTML_503 (0.00s)
+PASS
+ok      github.com/TykTechnologies/tyk-sre-assignment   0.135s
+```
+
+All 12 tests run against a **fake in-memory Kubernetes client** — no cluster is required.
 ---
 
 ## Implementation Notes
