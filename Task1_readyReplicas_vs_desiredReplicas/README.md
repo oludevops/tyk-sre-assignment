@@ -39,6 +39,12 @@ The same status code rules apply regardless of which format is requested.
 | `500 Internal Server Error` | The Kubernetes API could not be reached |
 
 ---
+## Test Environment
+8 deployments were created on kubernetes minikube
+![Deployments](test-deployments.png)
+
+
+---
 
 ## Running the Tool
 
@@ -49,10 +55,12 @@ The same status code rules apply regardless of which format is requested.
 ```bash
 cd ~/tyk-sre-assignment/golang
 go run main.go --kubeconfig ~/.kube/config
-```
+
 # Output:
 # Connected to Kubernetes v1.35.1
 # Server listening on :8080
+```
+
 
 > The server must stay running in Terminal 1. Open a second terminal for all subsequent commands.
 
@@ -168,7 +176,7 @@ curl -s http://localhost:8080/deployments/health | jq .
       "healthy": true
     },
     {
-      "name": "overprovisioned",
+      "name": "good-app",
       "namespace": "sre-test",
       "desiredReplicas": 20,
       "readyReplicas": 20,
@@ -204,7 +212,7 @@ The dashboard shows:
 
 ---
 
-## Running the Tests
+## In-memory test
 
 ```bash
 cd ~/tyk-sre-assignment/golang
