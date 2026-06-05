@@ -1,7 +1,9 @@
 # Task 3 — Helm Deployment
 
-**As an application developer I want to be able to deploy this application into a Kubernetes cluster using Helm**
+As an application developer I want to be able to deploy this application into a Kubernetes cluster using Helm
+
 ---
+
 ## What Was Built
 
 | Artifact | Location | Purpose |
@@ -125,41 +127,36 @@ The SHA tag is what you pass to `helm upgrade --set image.tag=sha-abc1234` so yo
 
 ### Prerequisites
 
-- Docker installed and authenticated to `ghcr.io`
 - Helm v3 installed (`helm version`)
 - A running Kubernetes cluster (`kubectl get nodes`)
 - `kubectl` configured to point at your cluster
 
-### Step 1 — Build and push the Docker image
+### Step 1 — Docker image
 
-GitHub Actions handles this automatically on every push to `main`. To build and push manually:
+The image is built and pushed automatically by GitHub Actions on every push to `main`. It is already available at `ghcr.io/oludevops/sre-tool:latest` and is public — no registry login or manual build needed.
+
+To verify the image is available:
 
 ```bash
+docker pull ghcr.io/oludevops/sre-tool:latest
+```
+
+**Manual build and push (only needed if GitHub Actions failed or you have local changes not yet pushed):**
+
+```bash
+# Create a Personal Access Token at https://github.com/settings/tokens
+# with write:packages and read:packages scopes, then:
+export GITHUB_TOKEN=ghp_yourtoken
+
 # Log in to the GitHub Container Registry
 echo $GITHUB_TOKEN | docker login ghcr.io -u oludevops --password-stdin
 
-# Build the image — run from the repo root
+# Build and push — run from the repo root
 docker build -t ghcr.io/oludevops/sre-tool:latest golang/
-
-# Push to the registry
 docker push ghcr.io/oludevops/sre-tool:latest
 ```
 
-### Step 2 — Make the image accessible to your cluster
-
-**For minikube (local testing):**
-
-```bash
-minikube image load ghcr.io/oludevops/sre-tool:latest
-```
-
-Then update `values.yaml` to set `imagePullPolicy: Never` so Kubernetes uses the locally loaded image.
-
-**For a real cluster using ghcr.io:**
-
-Make the package public on GitHub: Profile → Packages → sre-tool → Package settings → Change visibility → Public.
-
-### Step 3 — Install or upgrade the Helm chart
+### Step 2 — Install or upgrade the Helm chart
 
 > All `helm` commands must be run from the repo root (`~/tyk-sre-assignment`).
 
@@ -181,7 +178,7 @@ kubectl create namespace sre
 helm install sre-tool ./helm/sre-tool --namespace sre
 ```
 
-### Step 4 — Verify the deployment
+### Step 3 — Verify the deployment
 
 ```bash
 kubectl get pods -l app.kubernetes.io/name=sre-tool
@@ -196,28 +193,44 @@ kubectl logs -l app.kubernetes.io/name=sre-tool
 # Server listening on :8080
 ```
 
-### Step 5 — Access the endpoints
+### Step 4 — Access the endpoints
 
 **On minikube:**
 
 ```bash
+# Install with NodePort override
+helm install sre-tool ./helm/sre-tool --set service.type=NodePort
+
 # Get the URL
 minikube service sre-tool --url
 # Prints: http://192.168.49.2:30318
 
 curl -s http://192.168.49.2:30318/healthz | jq .
 curl -s http://192.168.49.2:30318/deployments/health | jq .
+
+# Browser
+http://192.168.49.2:30318/healthz?format=html
+http://192.168.49.2:30318/deployments/health?format=html
+http://192.168.49.2:30318/deployments/health?format=table
 ```
 
 **On AWS EKS:**
 
 ```bash
-# Get the load balancer DNS name
+# Install with default LoadBalancer
+helm install sre-tool ./helm/sre-tool
+
+# Get the load balancer DNS name (may take 1-2 min to provision)
 kubectl get svc sre-tool
-# EXTERNAL-IP: a1b2c3d4.eu-west-1.elb.amazonaws.com (takes 1-2 min to provision)
+# EXTERNAL-IP: a1b2c3d4.us-east-2.elb.amazonaws.com
 
 curl -s http://<EXTERNAL-IP>:8080/healthz | jq .
 curl -s http://<EXTERNAL-IP>:8080/deployments/health | jq .
+
+# Browser — accessible from any machine including Windows
+http://<EXTERNAL-IP>:8080/healthz?format=html
+http://<EXTERNAL-IP>:8080/deployments/health?format=html
+http://<EXTERNAL-IP>:8080/deployments/health?format=table
 ```
 
 ### Upgrading
