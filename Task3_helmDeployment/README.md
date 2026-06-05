@@ -31,16 +31,6 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o sre-tool .
 ```
 
-Line by line:
-
-- `WORKDIR /app` — sets the working directory inside the container. All subsequent commands run relative to `/app`.
-- `COPY go.mod go.sum ./` — copies the dependency manifest files first, before the source code. This is a Docker layer-caching optimisation — if only `main.go` changes, Docker reuses the cached `go mod download` layer and skips re-downloading dependencies.
-- `RUN go mod download` — downloads all third-party packages (`k8s.io/client-go`, `testify`, etc.) into the container.
-- `COPY . .` — copies all source files. `go build` ignores `_test.go` files automatically.
-- `CGO_ENABLED=0` — produces a fully static binary with no C library dependencies, required for it to run in a minimal Alpine image.
-- `GOOS=linux` — targets Linux explicitly, important when building on a Mac or Windows machine.
-- `-o sre-tool` — names the output binary.
-
 ### Stage 2 — Runtime
 
 A fresh minimal `alpine:3.19` image (~7MB). Nothing from Stage 1 is included except the binary.
@@ -54,12 +44,6 @@ USER sreuser
 EXPOSE 8080
 ENTRYPOINT ["sre-tool"]
 ```
-
-- `ca-certificates` — required for TLS connections to the Kubernetes API server (HTTPS).
-- `adduser -u 1001 sreuser` — runs the binary as a non-root user with a numeric UID. Kubernetes requires a numeric UID to enforce `runAsNonRoot`.
-- `COPY --from=builder` — pulls only the compiled binary from Stage 1.
-- `ENTRYPOINT` — the command Kubernetes runs when the container starts.
-
 **Final image size: ~17MB** vs ~600MB if the Go toolchain were included.
 
 ---
@@ -203,15 +187,15 @@ helm install sre-tool ./helm/sre-tool --set service.type=NodePort
 
 # Get the URL
 minikube service sre-tool --url
-# Prints: http://192.168.49.2:30318
+# Prints: http://192.*.*.*:30318
 
-curl -s http://192.168.49.2:30318/healthz | jq .
-curl -s http://192.168.49.2:30318/deployments/health | jq .
+curl -s http://192.*.*.*:30318/healthz | jq .
+curl -s http://192.*.*.*:30318/deployments/health | jq .
 
 # Browser
-http://192.168.49.2:30318/healthz?format=html
-http://192.168.49.2:30318/deployments/health?format=html
-http://192.168.49.2:30318/deployments/health?format=table
+http://192.*.*.*:30318/healthz?format=html
+http://192.*.*.*:30318/deployments/health?format=html
+http://192.*.*.*:30318/deployments/health?format=table
 ```
 
 **On AWS EKS:**
@@ -253,4 +237,4 @@ helm uninstall sre-tool
 - **Static binary:** `CGO_ENABLED=0` produces a binary with no C library dependencies. This is required for the binary to run in a minimal Alpine image.
 - **Non-root container:** The Dockerfile creates a dedicated `sreuser` with numeric UID 1001. The Helm chart enforces `runAsNonRoot: true` and `runAsUser: 1001` — Kubernetes requires a numeric UID to verify the container is not running as root.
 - **Liveness vs readiness probes:** Both hit `/healthz`. The liveness probe restarts the pod if the API server becomes unreachable. The readiness probe removes the pod from Service endpoints until it confirms connectivity.
-- **Layer caching:** Dependencies are downloaded in a separate Docker layer before source code is copied. Rebuilds after code-only changes skip the `go mod download` step entirely, making CI significantly faster.
+- **Layer caching:** Dependencies are downloaded in a separate Docker layer before source code is copied. Rebuilds after code-only changes skip the `go mod download` step entirely, making continuous integration significantly faster.
