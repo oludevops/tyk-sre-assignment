@@ -1,6 +1,6 @@
 # Task 3 — Helm Deployment
 
-As an application developer I want to be able to deploy this application into a Kubernetes cluster using Helm
+**As an application developer I want to be able to deploy this application into a Kubernetes cluster using Helm
 ---
 ## What Was Built
 
