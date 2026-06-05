@@ -44,20 +44,37 @@ The same status code rules apply regardless of which format is requested.
 
 ### Outside the cluster (local development)
 
+**Terminal 1 — start the server and keep it running:**
+
 ```bash
 cd ~/tyk-sre-assignment/golang
-
-# Terminal 1 — start the server
 go run main.go --kubeconfig ~/.kube/config
+# Output:
+# Connected to Kubernetes v1.35.1
+# Server listening on :8080
+```
 
-# Terminal 2 — query the endpoints
+> The server must stay running in Terminal 1. Open a second terminal for all subsequent commands.
+
+**Terminal 2 — query the endpoints:**
+
+```bash
+# Deployment health — JSON
 curl -s http://localhost:8080/deployments/health | jq .
 
-# Browser
+# API server health — JSON
+curl -s http://localhost:8080/healthz | jq .
+```
+
+**Browser:**
+```
 http://localhost:8080/deployments/health?format=html
 http://localhost:8080/deployments/health?format=table
+http://localhost:8080/healthz?format=html
+```
 
-# Custom listen address (default is :8080)
+**Custom listen address (default is :8080):**
+```bash
 go run main.go --kubeconfig ~/.kube/config --address :9090
 ```
 
@@ -65,9 +82,17 @@ go run main.go --kubeconfig ~/.kube/config --address :9090
 
 When deployed as a pod via Helm, the tool runs without any flags. Kubernetes automatically mounts a service account token into the pod at `/var/run/secrets/kubernetes.io/serviceaccount/token`. The `client-go` library detects this token and uses it to authenticate against the API server — no `--kubeconfig` needed.
 
+> All `helm` commands must be run from the repo root (`~/tyk-sre-assignment`).
+
 ```bash
-# Install the Helm chart — the tool starts automatically inside the cluster
-helm install sre-tool ./helm/sre-tool
+# Check if already installed
+helm list
+
+# First time install (minikube)
+helm install sre-tool ./helm/sre-tool --set service.type=NodePort
+
+# Already installed — upgrade instead
+helm upgrade sre-tool ./helm/sre-tool --set service.type=NodePort
 
 # Verify the pod is running
 kubectl get pods -l app.kubernetes.io/name=sre-tool
@@ -75,16 +100,19 @@ kubectl get pods -l app.kubernetes.io/name=sre-tool
 # Check the logs to confirm it connected to the cluster
 kubectl logs -l app.kubernetes.io/name=sre-tool
 # Expected output:
-# Neither --kubeconfig nor --master was specified. Using the inClusterConfig.
 # Connected to Kubernetes v1.35.1
 # Server listening on :8080
 
-# Access the endpoints via minikube
+# Get the minikube URL
 minikube service sre-tool --url
-# Then use the printed URL e.g. http://192.168.49.2:31234/deployments/health
+# Example: http://192.168.49.2:30318
+
+# Query the endpoints using the minikube URL
+curl -s http://192.168.49.2:30318/deployments/health | jq .
+curl -s http://192.168.49.2:30318/healthz | jq .
 ```
 
-The warning `Neither --kubeconfig nor --master was specified` is harmless — it is `client-go` confirming it detected the in-cluster token and is using it.
+The warning `Neither --kubeconfig nor --master was specified` in the logs is harmless — it is `client-go` confirming it detected the in-cluster token and is using it.
 
 ---
 

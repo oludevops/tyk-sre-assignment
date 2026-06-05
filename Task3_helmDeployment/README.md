@@ -12,6 +12,8 @@ Everything you need to run the tool on your own cluster from scratch. The image 
 
 > **Note:** This chart was developed and tested on **minikube**. Instructions for both minikube and AWS EKS are provided below.
 
+> **Important:** All `helm` commands must be run from the **repo root** (`~/tyk-sre-assignment`), not from inside the `helm/` directory.
+
 ---
 
 ### On minikube
@@ -21,19 +23,35 @@ Everything you need to run the tool on your own cluster from scratch. The image 
 git clone https://github.com/oludevops/tyk-sre-assignment.git
 cd tyk-sre-assignment
 
-# 2. Install the Helm chart, overriding the service type to NodePort
-#    (minikube does not support LoadBalancer without extra tooling)
+# 2. Check if the release is already installed
+helm list
+# If "sre-tool" appears in the list, skip to the upgrade command below.
+
+# 3a. First time — install the chart
 helm install sre-tool ./helm/sre-tool --set service.type=NodePort
 
-# 3. Wait for the pod to be ready (usually 15-30 seconds)
+# 3b. Already installed — upgrade instead
+helm upgrade sre-tool ./helm/sre-tool --set service.type=NodePort
+
+# 4. Wait for the pod to be ready (usually 15-30 seconds)
 kubectl get pods -w -l app.kubernetes.io/name=sre-tool
 
-# 4. Get the URL — minikube assigns a routable IP and port automatically
+# 5. Get the URL — minikube assigns a routable IP and port automatically
 minikube service sre-tool --url
-# Example output: http://192.168.49.2:31234
+# Example output: http://192.168.49.2:30318
 ```
 
-Use the URL printed above to access the endpoints.
+Use the URL printed above to access the endpoints:
+
+```bash
+curl -s http://192.168.49.2:30318/healthz | jq .
+curl -s http://192.168.49.2:30318/deployments/health | jq .
+
+# Or in the browser:
+# http://192.168.49.2:30318/healthz?format=html
+# http://192.168.49.2:30318/deployments/health?format=html
+# http://192.168.49.2:30318/deployments/health?format=table
+```
 
 ---
 
@@ -49,31 +67,48 @@ cd tyk-sre-assignment
 # 2. Make sure kubectl is pointing at your EKS cluster
 aws eks update-kubeconfig --region <your-region> --name <your-cluster-name>
 
-# 3. Install the Helm chart (LoadBalancer is the default — no override needed)
+# 3. Check if the release is already installed
+helm list
+# If "sre-tool" appears in the list, skip to the upgrade command below.
+
+# 4a. First time — install the chart (LoadBalancer is the default — no override needed)
 helm install sre-tool ./helm/sre-tool
 
-# 4. Wait for the pod to be ready
+# 4b. Already installed — upgrade instead
+helm upgrade sre-tool ./helm/sre-tool
+
+# 5. Wait for the pod to be ready
 kubectl get pods -w -l app.kubernetes.io/name=sre-tool
 
-# 5. Get the public DNS name assigned by AWS
+# 6. Get the public DNS name assigned by AWS
 kubectl get svc sre-tool
 # Look for the EXTERNAL-IP column — it will show an AWS DNS name like:
-# a1b2c3d4e5f6g7h8.eu-west-1.elb.amazonaws.com
+# a1b2c3d4e5f6.eu-west-1.elb.amazonaws.com
 # This may take 1-2 minutes to appear while AWS provisions the load balancer
 ```
 
-Use `http://<EXTERNAL-IP>` to access the endpoints.
+Use `http://<EXTERNAL-IP>:8080` to access the endpoints:
+
+```bash
+curl -s http://<EXTERNAL-IP>:8080/healthz | jq .
+curl -s http://<EXTERNAL-IP>:8080/deployments/health | jq .
+
+# Or in the browser:
+# http://<EXTERNAL-IP>:8080/healthz?format=html
+# http://<EXTERNAL-IP>:8080/deployments/health?format=html
+```
 
 ---
 
 ### Endpoints to verify
 
 | Endpoint | What it shows |
-|----------|--------------|
+|----------|--------------| 
 | `<url>/healthz` | JSON — whether the tool can reach the k8s API server |
 | `<url>/healthz?format=html` | HTML — green/red API server status dashboard |
 | `<url>/deployments/health` | JSON — health of every deployment in the cluster |
 | `<url>/deployments/health?format=html` | HTML — deployment health dashboard |
+| `<url>/deployments/health?format=table` | HTML — Excel-style spreadsheet view |
 
 ---
 
@@ -129,7 +164,7 @@ A fresh minimal `alpine:3.19` image (~7MB). Nothing from Stage 1 is included exc
 ```dockerfile
 FROM alpine:3.19
 RUN apk --no-cache add ca-certificates
-RUN addgroup -S sregroup && adduser -S sreuser -G sregroup
+RUN addgroup -S -g 1001 sregroup && adduser -S -u 1001 -G sregroup sreuser
 COPY --from=builder /app/sre-tool /usr/local/bin/sre-tool
 USER sreuser
 EXPOSE 8080
@@ -137,7 +172,7 @@ ENTRYPOINT ["sre-tool"]
 ```
 
 - `ca-certificates` — required for TLS connections to the Kubernetes API server (HTTPS).
-- `adduser sreuser` — runs the binary as a non-root user, reducing the attack surface.
+- `adduser -u 1001 sreuser` — runs the binary as a non-root user with a numeric UID. Kubernetes requires a numeric UID to enforce `runAsNonRoot`.
 - `COPY --from=builder` — pulls only the compiled binary from Stage 1.
 - `ENTRYPOINT` — the command Kubernetes runs when the container starts.
 
@@ -221,7 +256,7 @@ GitHub Actions handles this automatically on every push to `main`. To build and 
 # Log in to the GitHub Container Registry
 echo $GITHUB_TOKEN | docker login ghcr.io -u oludevops --password-stdin
 
-# Build the image
+# Build the image — run from the repo root
 docker build -t ghcr.io/oludevops/sre-tool:latest golang/
 
 # Push to the registry
@@ -233,7 +268,6 @@ docker push ghcr.io/oludevops/sre-tool:latest
 **For minikube (local testing):**
 
 ```bash
-# Load the image directly into minikube — no registry push needed
 minikube image load ghcr.io/oludevops/sre-tool:latest
 ```
 
@@ -243,61 +277,68 @@ Then update `values.yaml` to set `imagePullPolicy: Never` so Kubernetes uses the
 
 Make the package public on GitHub: Profile → Packages → sre-tool → Package settings → Change visibility → Public.
 
-### Step 3 — Install the Helm chart
+### Step 3 — Install or upgrade the Helm chart
+
+> All `helm` commands must be run from the repo root (`~/tyk-sre-assignment`).
 
 ```bash
-# Install with the release name "sre-tool" into the default namespace
+# Check if already installed
+helm list
+
+# First time install
 helm install sre-tool ./helm/sre-tool
 
-# Or install into a dedicated namespace
+# Already installed — upgrade instead
+helm upgrade sre-tool ./helm/sre-tool
+
+# Override the image tag with a specific git SHA
+helm install sre-tool ./helm/sre-tool --set image.tag=sha-abc1234
+
+# Install into a dedicated namespace
 kubectl create namespace sre
 helm install sre-tool ./helm/sre-tool --namespace sre
-
-# Override the image tag with a specific git SHA from the CI build
-helm install sre-tool ./helm/sre-tool --set image.tag=sha-abc1234
 ```
 
 ### Step 4 — Verify the deployment
 
 ```bash
-# Check the pod is running
 kubectl get pods -l app.kubernetes.io/name=sre-tool
-
-# Check the service was created
 kubectl get svc sre-tool
-
-# Check the RBAC resources
 kubectl get clusterrole sre-tool-role
 kubectl get clusterrolebinding sre-tool-rolebinding
+
+# Check logs to confirm in-cluster auth worked
+kubectl logs -l app.kubernetes.io/name=sre-tool
+# Expected:
+# Connected to Kubernetes v1.x.x
+# Server listening on :8080
 ```
 
 ### Step 5 — Access the endpoints
 
-**On minikube** (NodePort override required):
+**On minikube:**
 
 ```bash
-helm install sre-tool ./helm/sre-tool --set service.type=NodePort
+# Get the URL
 minikube service sre-tool --url
-# Prints: http://192.168.49.2:31234 — use this URL directly
-curl -s http://192.168.49.2:31234/healthz | jq .
-curl -s http://192.168.49.2:31234/deployments/health | jq .
+# Prints: http://192.168.49.2:30318
+
+curl -s http://192.168.49.2:30318/healthz | jq .
+curl -s http://192.168.49.2:30318/deployments/health | jq .
 ```
 
-**On AWS EKS** (default LoadBalancer — no override needed):
+**On AWS EKS:**
 
 ```bash
-helm install sre-tool ./helm/sre-tool
-# Wait for the AWS load balancer to be provisioned (~1-2 minutes)
+# Get the load balancer DNS name
 kubectl get svc sre-tool
-# EXTERNAL-IP column shows the AWS DNS name e.g:
-# a1b2c3d4.eu-west-1.elb.amazonaws.com
-curl -s http://<EXTERNAL-IP>/healthz | jq .
-curl -s http://<EXTERNAL-IP>/deployments/health | jq .
+# EXTERNAL-IP: a1b2c3d4.eu-west-1.elb.amazonaws.com (takes 1-2 min to provision)
+
+curl -s http://<EXTERNAL-IP>:8080/healthz | jq .
+curl -s http://<EXTERNAL-IP>:8080/deployments/health | jq .
 ```
 
 ### Upgrading
-
-When a new image is pushed by CI, upgrade the running release:
 
 ```bash
 helm upgrade sre-tool ./helm/sre-tool --set image.tag=sha-newsha
@@ -309,14 +350,12 @@ helm upgrade sre-tool ./helm/sre-tool --set image.tag=sha-newsha
 helm uninstall sre-tool
 ```
 
-Removes the Deployment, Service, ServiceAccount, ClusterRole, and ClusterRoleBinding in one command.
-
 ---
 
 ## Implementation Notes
 
 - **In-cluster vs out-of-cluster:** When `--kubeconfig` is not provided, `client-go` automatically detects it is running inside the cluster and reads the service account token from the mounted path. The same binary works both locally (with `--kubeconfig`) and inside the cluster (without it).
 - **Static binary:** `CGO_ENABLED=0` produces a binary with no C library dependencies. This is required for the binary to run in a minimal Alpine image.
-- **Non-root container:** The Dockerfile creates a dedicated `sreuser` and the Helm chart enforces `runAsNonRoot: true` in the pod security context — two independent layers of defence.
-- **Liveness vs readiness probes:** Both hit `/healthz`. The liveness probe restarts the pod if the API server becomes unreachable. The readiness probe removes the pod from Service endpoints until it confirms connectivity — preventing traffic from reaching a pod that cannot do its job.
+- **Non-root container:** The Dockerfile creates a dedicated `sreuser` with numeric UID 1001. The Helm chart enforces `runAsNonRoot: true` and `runAsUser: 1001` — Kubernetes requires a numeric UID to verify the container is not running as root.
+- **Liveness vs readiness probes:** Both hit `/healthz`. The liveness probe restarts the pod if the API server becomes unreachable. The readiness probe removes the pod from Service endpoints until it confirms connectivity.
 - **Layer caching:** Dependencies are downloaded in a separate Docker layer before source code is copied. Rebuilds after code-only changes skip the `go mod download` step entirely, making CI significantly faster.
