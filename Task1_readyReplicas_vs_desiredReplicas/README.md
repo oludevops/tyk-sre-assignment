@@ -1,6 +1,6 @@
 # Task 1 — Deployment Health Check
 
-**As an SRE I want to know whether all the deployments in the k8s cluster have as many healthy pods as requested by the respective `Deployment` spec.**
+> **As an SRE I want to know whether all the deployments in the k8s cluster have as many healthy pods as requested by the respective `Deployment` spec.**
 
 ---
 
@@ -39,12 +39,6 @@ The same status code rules apply regardless of which format is requested.
 | `500 Internal Server Error` | The Kubernetes API could not be reached |
 
 ---
-## Test Environment
-8 deployments were created on kubernetes minikube
-![Deployments](test-deployments.png)
-
-
----
 
 ## Running the Tool
 
@@ -55,12 +49,10 @@ The same status code rules apply regardless of which format is requested.
 ```bash
 cd ~/tyk-sre-assignment/golang
 go run main.go --kubeconfig ~/.kube/config
-
 # Output:
 # Connected to Kubernetes v1.35.1
 # Server listening on :8080
 ```
-
 
 > The server must stay running in Terminal 1. Open a second terminal for all subsequent commands.
 
@@ -69,6 +61,9 @@ go run main.go --kubeconfig ~/.kube/config
 ```bash
 # Deployment health — JSON
 curl -s http://localhost:8080/deployments/health | jq .
+
+# API server health — JSON
+curl -s http://localhost:8080/healthz | jq .
 ```
 
 **Browser:**
@@ -76,6 +71,11 @@ curl -s http://localhost:8080/deployments/health | jq .
 http://localhost:8080/deployments/health?format=html
 http://localhost:8080/deployments/health?format=table
 http://localhost:8080/healthz?format=html
+```
+
+**Custom listen address (default is :8080):**
+```bash
+go run main.go --kubeconfig ~/.kube/config --address :9090
 ```
 
 ### Inside the cluster (Helm deployment)
@@ -86,7 +86,6 @@ When deployed as a pod via Helm, the tool runs without any flags. Kubernetes aut
 
 ```bash
 # Check if already installed
-cd ~/tyk-sre-assignment
 helm list
 
 # First time install (minikube)
@@ -106,11 +105,11 @@ kubectl logs -l app.kubernetes.io/name=sre-tool
 
 # Get the minikube URL
 minikube service sre-tool --url
-# Example: http://192.*.*.*:30318
+# Example: http://192.168.49.2:30318
 
 # Query the endpoints using the minikube URL
-curl -s http://192.*.*.*:30318/deployments/health | jq .
-curl -s http://192.*.*.*:30318/healthz | jq .
+curl -s http://192.168.49.2:30318/deployments/health | jq .
+curl -s http://192.168.49.2:30318/healthz | jq .
 ```
 
 The warning `Neither --kubeconfig nor --master was specified` in the logs is harmless — it is `client-go` confirming it detected the in-cluster token and is using it.
@@ -176,7 +175,7 @@ curl -s http://localhost:8080/deployments/health | jq .
       "healthy": true
     },
     {
-      "name": "good-app",
+      "name": "overprovisioned",
       "namespace": "sre-test",
       "desiredReplicas": 20,
       "readyReplicas": 20,
@@ -212,7 +211,7 @@ The dashboard shows:
 
 ---
 
-## In-memory test
+## Running the Tests
 
 ```bash
 cd ~/tyk-sre-assignment/golang
@@ -261,6 +260,6 @@ All 12 tests run against a **fake in-memory Kubernetes client** — no cluster i
 - **Business logic is separated from the HTTP layer.** `getDeploymentsHealth` accepts a `context.Context` and a `kubernetes.Interface` and returns a plain struct. This makes it trivially testable without spinning up an HTTP server.
 - **Three response formats share one handler.** `deploymentsHealthHandler` reads `?format=` and delegates to `renderJSON`, `renderHTML`, or `renderTable`. The HTTP status code (200 vs 503) is computed once and passed to whichever renderer is called.
 - **HTML rendering uses `html/template`.** Go's `html/template` package automatically escapes all values inserted into the page, preventing XSS attacks — no sanitisation code needed.
-- **Auto-refresh.** A `<meta http-equiv="refresh" content="10">` tag in the HTML `<head>` instructs the browser to reload every 10 seconds, keeping the dashboard current without any client-side code.
-- **In memory test.** In memory test use `fake.NewSimpleClientset()` from `k8s.io/client-go/kubernetes/fake` — an in-memory Kubernetes client that returns whatever objects you seed it with. This makes the test suite fast and fully self-contained.
+- **Auto-refresh uses no JavaScript.** A `<meta http-equiv="refresh" content="10">` tag in the HTML `<head>` instructs the browser to reload every 10 seconds, keeping the dashboard current without any client-side code.
+- **Tests require no cluster.** All tests use `fake.NewSimpleClientset()` from `k8s.io/client-go/kubernetes/fake` — an in-memory Kubernetes client that returns whatever objects you seed it with. This makes the test suite fast and fully self-contained.
 - **In-cluster authentication is automatic.** When no `--kubeconfig` flag is provided, `client-go` detects the pod's mounted service account token and uses it to authenticate — the same binary works both locally and inside the cluster without any code changes.
