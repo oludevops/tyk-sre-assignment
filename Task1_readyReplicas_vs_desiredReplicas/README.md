@@ -150,6 +150,10 @@ kubectl logs -l app.kubernetes.io/name=sre-tool
 # The EXTERNAL-IP column shows the load balancer address.
 # This may take 1-2 minutes to appear while AWS provisions the load balancer.
 kubectl get svc sre-tool
+# it should look like this
+# NAME       TYPE           CLUSTER-IP       EXTERNAL-IP                                                               PORT(S)          AGE
+# sre-tool   LoadBalancer   10.*.*.*         a9a1a1783*************-*************.us-east-2.elb.amazonaws.com          8080:31606/TCP   14m
+
 ```
 
 Once `EXTERNAL-IP` is populated:
