@@ -42,27 +42,49 @@ The same status code rules apply regardless of which format is requested.
 
 ## Running the Tool
 
+### Outside the cluster (local development)
+
 ```bash
 cd ~/tyk-sre-assignment/golang
 
-# Against an external cluster
-# In the first terminal run the command below. This will connect to the Kubernetes cluster on port 8080.
+# Terminal 1 — start the server
 go run main.go --kubeconfig ~/.kube/config
 
-# Deployment health — JSON
-# Open a second terminal and run
+# Terminal 2 — query the endpoints
 curl -s http://localhost:8080/deployments/health | jq .
 
-# In a browser run
+# Browser
 http://localhost:8080/deployments/health?format=html
 http://localhost:8080/deployments/health?format=table
-
-# Inside the cluster (uses pod service-account token automatically)
-go run main.go
 
 # Custom listen address (default is :8080)
 go run main.go --kubeconfig ~/.kube/config --address :9090
 ```
+
+### Inside the cluster (Helm deployment)
+
+When deployed as a pod via Helm, the tool runs without any flags. Kubernetes automatically mounts a service account token into the pod at `/var/run/secrets/kubernetes.io/serviceaccount/token`. The `client-go` library detects this token and uses it to authenticate against the API server — no `--kubeconfig` needed.
+
+```bash
+# Install the Helm chart — the tool starts automatically inside the cluster
+helm install sre-tool ./helm/sre-tool
+
+# Verify the pod is running
+kubectl get pods -l app.kubernetes.io/name=sre-tool
+
+# Check the logs to confirm it connected to the cluster
+kubectl logs -l app.kubernetes.io/name=sre-tool
+# Expected output:
+# Neither --kubeconfig nor --master was specified. Using the inClusterConfig.
+# Connected to Kubernetes v1.35.1
+# Server listening on :8080
+
+# Access the endpoints via minikube
+minikube service sre-tool --url
+# Then use the printed URL e.g. http://192.168.49.2:31234/deployments/health
+```
+
+The warning `Neither --kubeconfig nor --master was specified` is harmless — it is `client-go` confirming it detected the in-cluster token and is using it.
 
 ---
 
@@ -164,10 +186,12 @@ The dashboard shows:
 ## Running the Tests
 
 ```bash
-cd cd ~/tyk-sre-assignment/golang
+cd ~/tyk-sre-assignment/golang
 go test ./... -v
 ```
+
 ---
+
 ## In-memory test result
 
 ```
@@ -200,6 +224,7 @@ ok      github.com/TykTechnologies/tyk-sre-assignment   0.135s
 ```
 
 All 12 tests run against a **fake in-memory Kubernetes client** — no cluster is required.
+
 ---
 
 ## Implementation Notes
@@ -209,3 +234,4 @@ All 12 tests run against a **fake in-memory Kubernetes client** — no cluster i
 - **HTML rendering uses `html/template`.** Go's `html/template` package automatically escapes all values inserted into the page, preventing XSS attacks — no sanitisation code needed.
 - **Auto-refresh uses no JavaScript.** A `<meta http-equiv="refresh" content="10">` tag in the HTML `<head>` instructs the browser to reload every 10 seconds, keeping the dashboard current without any client-side code.
 - **Tests require no cluster.** All tests use `fake.NewSimpleClientset()` from `k8s.io/client-go/kubernetes/fake` — an in-memory Kubernetes client that returns whatever objects you seed it with. This makes the test suite fast and fully self-contained.
+- **In-cluster authentication is automatic.** When no `--kubeconfig` flag is provided, `client-go` detects the pod's mounted service account token and uses it to authenticate — the same binary works both locally and inside the cluster without any code changes.
