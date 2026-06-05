@@ -85,36 +85,29 @@ The dashboard shows:
 - Footer links to switch between JSON and HTML views
 
 ---
+## In memory tests
+```bash
+cd ~/tyk-sre-assignment/golang
+go test ./... -v
+```
+No cluster required — all tests use an in-memory fake Kubernetes client.
 
 ## Test Results
 
 ```
-=== RUN   TestHealthHandler
---- PASS: TestHealthHandler (0.00s)
 === RUN   TestHealthzHandler_APIReachable
 --- PASS: TestHealthzHandler_APIReachable (0.00s)
 === RUN   TestHealthzHandler_HTML_200
---- PASS: TestHealthzHandler_HTML_200 (0.01s)
+--- PASS: TestHealthzHandler_HTML_200 (0.00s)
 === RUN   TestHealthzHandler_APIUnreachable
 --- PASS: TestHealthzHandler_APIUnreachable (0.00s)
 === RUN   TestHealthzHandler_HTML_503
 --- PASS: TestHealthzHandler_HTML_503 (0.00s)
 PASS
-ok      github.com/TykTechnologies/tyk-sre-assignment   0.089s
+ok      github.com/TykTechnologies/tyk-sre-assignment   0.508s
 ```
 
 The unreachable tests use a custom `errorClientset` that wraps the fake clientset and overrides `Discovery().ServerVersion()` to return an error — simulating a cluster that is down without needing a real network failure.
-
----
-
-## Running the Tests
-
-```bash
-cd ~/tyk-sre-assignment/golang
-go test ./... -v
-```
-
-No cluster required — all tests use an in-memory fake Kubernetes client.
 
 ---
 
@@ -124,4 +117,4 @@ No cluster required — all tests use an in-memory fake Kubernetes client.
 - **Latency measurement:** `time.Now()` is recorded before the probe and `time.Since(start).Milliseconds()` is calculated after. This gives the true round-trip time including network and API server processing.
 - **Handler factory pattern:** `healthHandler` is a factory function — it accepts the `clientset` and returns an `http.HandlerFunc`. This is the same pattern used by `deploymentsHealthHandler`, keeping the codebase consistent.
 - **HTML rendering uses `html/template`:** All values inserted into the HTML page are automatically escaped, preventing XSS attacks.
-- **Auto-refresh uses no JavaScript:** A `<meta http-equiv="refresh" content="10">` tag handles the reload — no client-side code needed.
+- **Auto-refresh:** A `<meta http-equiv="refresh" content="10">` tag handles the reload — no client-side code needed.
