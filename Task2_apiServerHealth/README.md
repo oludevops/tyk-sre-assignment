@@ -1,12 +1,6 @@
 # Task 2 — API Server Health Check
 
-Enhances the existing `/healthz` endpoint to actively probe the Kubernetes API server on every request, so the SRE team always knows whether the tool can successfully communicate with the cluster.
-
----
-
-## User Story
-
-> **As an SRE I want to always know whether this tool can successfully communicate with the configured k8s API server.**
+**As an SRE I want to always know whether this tool can successfully communicate with the configured k8s API server.**
 
 ---
 
@@ -39,7 +33,7 @@ It now actively probes the Kubernetes API server on every request by calling `Di
 ## Running the Tool
 
 ```bash
-cd golang
+cd ~/tyk-sre-assignment/golang
 go run main.go --kubeconfig ~/.kube/config
 ```
 
@@ -79,6 +73,7 @@ The `checkedAt` field is always UTC. The `error` field is omitted from the JSON 
 ## Live Output — HTML Dashboard
 
 `http://localhost:8080/healthz?format=html`
+
 
 The dashboard shows:
 - A large **green dot** and "API Server Reachable" when the probe succeeds
