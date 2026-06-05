@@ -49,10 +49,10 @@ The same status code rules apply regardless of which format is requested.
 ```bash
 cd ~/tyk-sre-assignment/golang
 go run main.go --kubeconfig ~/.kube/config
+```
 # Output:
 # Connected to Kubernetes v1.35.1
 # Server listening on :8080
-```
 
 > The server must stay running in Terminal 1. Open a second terminal for all subsequent commands.
 
@@ -61,9 +61,6 @@ go run main.go --kubeconfig ~/.kube/config
 ```bash
 # Deployment health — JSON
 curl -s http://localhost:8080/deployments/health | jq .
-
-# API server health — JSON
-curl -s http://localhost:8080/healthz | jq .
 ```
 
 **Browser:**
@@ -71,11 +68,6 @@ curl -s http://localhost:8080/healthz | jq .
 http://localhost:8080/deployments/health?format=html
 http://localhost:8080/deployments/health?format=table
 http://localhost:8080/healthz?format=html
-```
-
-**Custom listen address (default is :8080):**
-```bash
-go run main.go --kubeconfig ~/.kube/config --address :9090
 ```
 
 ### Inside the cluster (Helm deployment)
@@ -86,6 +78,7 @@ When deployed as a pod via Helm, the tool runs without any flags. Kubernetes aut
 
 ```bash
 # Check if already installed
+cd ~/tyk-sre-assignment
 helm list
 
 # First time install (minikube)
@@ -105,11 +98,11 @@ kubectl logs -l app.kubernetes.io/name=sre-tool
 
 # Get the minikube URL
 minikube service sre-tool --url
-# Example: http://192.168.49.2:30318
+# Example: http://192.*.*.*:30318
 
 # Query the endpoints using the minikube URL
-curl -s http://192.168.49.2:30318/deployments/health | jq .
-curl -s http://192.168.49.2:30318/healthz | jq .
+curl -s http://192.*.*.*:30318/deployments/health | jq .
+curl -s http://192.*.*.*:30318/healthz | jq .
 ```
 
 The warning `Neither --kubeconfig nor --master was specified` in the logs is harmless — it is `client-go` confirming it detected the in-cluster token and is using it.
