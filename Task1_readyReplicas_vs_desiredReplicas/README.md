@@ -1,6 +1,6 @@
 # Task 1 — Deployment Health Check
 
-> **As an SRE I want to know whether all the deployments in the k8s cluster have as many healthy pods as requested by the respective `Deployment` spec.**
+**As an SRE I want to know whether all the deployments in the k8s cluster have as many healthy pods as requested by the respective `Deployment` spec.**
 
 ---
 
