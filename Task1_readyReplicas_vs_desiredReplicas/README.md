@@ -105,11 +105,11 @@ kubectl logs -l app.kubernetes.io/name=sre-tool
 
 # Get the minikube URL
 minikube service sre-tool --url
-# Example: http://192.168.49.2:30318
+# Example: http://192.*.*.*:30318
 
 # Query the endpoints using the minikube URL
-curl -s http://192.168.49.2:30318/deployments/health | jq .
-curl -s http://192.168.49.2:30318/healthz | jq .
+curl -s http://192.*.*.*:30318/deployments/health | jq .
+curl -s http://192.*.*.*:30318/healthz | jq .
 ```
 
 The warning `Neither --kubeconfig nor --master was specified` in the logs is harmless — it is `client-go` confirming it detected the in-cluster token and is using it.
