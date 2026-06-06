@@ -40,6 +40,14 @@ The same status code rules apply regardless of which format is requested.
 
 ---
 
+## Test Environment
+
+8 deployments were created on kubernetes minikube
+
+![Deployments](test-deployments.png)
+
+---
+
 ## Running the Tool
 
 ### Outside the cluster (local development)
@@ -49,6 +57,7 @@ The same status code rules apply regardless of which format is requested.
 ```bash
 cd ~/tyk-sre-assignment/golang
 go run main.go --kubeconfig ~/.kube/config
+
 # Output:
 # Connected to Kubernetes v1.35.1
 # Server listening on :8080
@@ -61,9 +70,6 @@ go run main.go --kubeconfig ~/.kube/config
 ```bash
 # Deployment health — JSON
 curl -s http://localhost:8080/deployments/health | jq .
-
-# API server health — JSON
-curl -s http://localhost:8080/healthz | jq .
 ```
 
 **Browser:**
@@ -73,22 +79,21 @@ http://localhost:8080/deployments/health?format=table
 http://localhost:8080/healthz?format=html
 ```
 
-**Custom listen address (default is :8080):**
-```bash
-go run main.go --kubeconfig ~/.kube/config --address :9090
-```
+---
 
-### Inside the cluster (Helm deployment)
+### Inside the cluster — minikube
 
 When deployed as a pod via Helm, the tool runs without any flags. Kubernetes automatically mounts a service account token into the pod at `/var/run/secrets/kubernetes.io/serviceaccount/token`. The `client-go` library detects this token and uses it to authenticate against the API server — no `--kubeconfig` needed.
 
 > All `helm` commands must be run from the repo root (`~/tyk-sre-assignment`).
 
 ```bash
+cd ~/tyk-sre-assignment
+
 # Check if already installed
 helm list
 
-# First time install (minikube)
+# First time install
 helm install sre-tool ./helm/sre-tool --set service.type=NodePort
 
 # Already installed — upgrade instead
@@ -105,11 +110,16 @@ kubectl logs -l app.kubernetes.io/name=sre-tool
 
 # Get the minikube URL
 minikube service sre-tool --url
-# Example: http://192.*.*.*:30318
+# Example: http://192.168.49.2:30318
 
 # Query the endpoints using the minikube URL
-curl -s http://192.*.*.*:30318/deployments/health | jq .
-curl -s http://192.*.*.*:30318/healthz | jq .
+curl -s http://192.168.49.2:30318/deployments/health | jq .
+curl -s http://192.168.49.2:30318/healthz | jq .
+
+# Browser
+http://192.168.49.2:30318/deployments/health?format=html
+http://192.168.49.2:30318/deployments/health?format=table
+http://192.168.49.2:30318/healthz?format=html
 ```
 
 The warning `Neither --kubeconfig nor --master was specified` in the logs is harmless — it is `client-go` confirming it detected the in-cluster token and is using it.
@@ -150,10 +160,6 @@ kubectl logs -l app.kubernetes.io/name=sre-tool
 # The EXTERNAL-IP column shows the load balancer address.
 # This may take 1-2 minutes to appear while AWS provisions the load balancer.
 kubectl get svc sre-tool
-# it should look like this
-# NAME       TYPE           CLUSTER-IP       EXTERNAL-IP                                                               PORT(S)          AGE
-# sre-tool   LoadBalancer   10.*.*.*         a9a1a1783*************-*************.us-east-2.elb.amazonaws.com          8080:31606/TCP   14m
-
 ```
 
 Once `EXTERNAL-IP` is populated:
@@ -230,7 +236,7 @@ curl -s http://localhost:8080/deployments/health | jq .
       "healthy": true
     },
     {
-      "name": "overprovisioned",
+      "name": "good-app",
       "namespace": "sre-test",
       "desiredReplicas": 20,
       "readyReplicas": 20,
@@ -266,7 +272,7 @@ The dashboard shows:
 
 ---
 
-## Running the Tests
+## In-memory test
 
 ```bash
 cd ~/tyk-sre-assignment/golang
