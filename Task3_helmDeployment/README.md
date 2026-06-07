@@ -142,22 +142,30 @@ docker push ghcr.io/oludevops/sre-tool:latest
 
 ### Step 2 — Install or upgrade the Helm chart
 
-> All `helm` commands must be run from the repo root (`~/tyk-sre-assignment`).
+All `helm` commands must be run from the repo root (`~/tyk-sre-assignment`).
 
 ```bash
 # Check if already installed
 helm list
+```
 
-# First time install
+Run **one** of the following depending on your situation:
+
+```bash
+# OPTION 1 — First time install (default settings)
 helm install sre-tool ./helm/sre-tool
 
-# Already installed — upgrade instead
+# OPTION 2 — Already installed — upgrade instead
 helm upgrade sre-tool ./helm/sre-tool
 
-# Override the image tag with a specific git SHA
+# OPTION 3 — First time install pinned to a specific image version
+# The SHA comes from the GitHub Actions run:
+# https://github.com/<github-account-name>/tyk-sre-assignment/actions
+# Click the latest successful build → look for the sha-xxxxxxx tag in th
+# Or get it from the terminal: git log --oneline -1
 helm install sre-tool ./helm/sre-tool --set image.tag=sha-abc1234
 
-# Install into a dedicated namespace
+# OPTION 4 — First time install into a dedicated namespace
 kubectl create namespace sre
 helm install sre-tool ./helm/sre-tool --namespace sre
 ```

@@ -136,15 +136,15 @@ Server listening on :8081
 =================================================================
 ```
 
-> The server must stay running in Terminal 1. Open a second terminal to run the curl and browser commands printed above.
+The server must stay running in Terminal 1. Open a second terminal to run the curl and browser commands printed above.
 
 ---
 
 ### Inside the cluster — minikube
 
-When deployed as a pod via Helm, the tool runs without any flags. Kubernetes automatically mounts a service account token into the pod at `/var/run/secrets/kubernetes.io/serviceaccount/token`. The `client-go` library detects this token and uses it to authenticate against the API server — no `--kubeconfig` needed.
+When deployed as a pod via Helm, the tool runs without any flags. Kubernetes automatically mounts a service account token into the pod at `/var/run/secrets/kubernetes.io/serviceaccount/token`. The `client-go` library detects this token and uses it to authenticate against the API server, no `--kubeconfig` needed.
 
-> All `helm` commands must be run from the repo root (`~/tyk-sre-assignment`).
+All `helm` commands must be run from the repo root (`~/tyk-sre-assignment`).
 
 ```bash
 cd ~/tyk-sre-assignment
