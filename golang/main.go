@@ -19,6 +19,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -27,10 +28,14 @@ func main() {
 	flag.Parse()
 
 	// If no kubeconfig is provided, the tool is running inside the cluster.
-	// Skip the interactive prompt and start automatically on :8080.
+	// Use the in-cluster service account token and skip the interactive prompt.
 	if *kubeconfig == "" {
 		fmt.Println("Running inside cluster — using in-cluster service account token.")
-		clientset, err := buildClientsetForContext("", "")
+		config, err := rest.InClusterConfig()
+		if err != nil {
+			panic(fmt.Errorf("in-cluster config failed: %w", err))
+		}
+		clientset, err := kubernetes.NewForConfig(config)
 		if err != nil {
 			panic(err)
 		}
