@@ -43,8 +43,13 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		fmt.Printf("Connected to Kubernetes %s\n", version)
-		if err := startServer(":8080", clientset, "in-cluster"); err != nil {
+		// Read cluster name from environment variable set by Helm.
+		clusterName := os.Getenv("CLUSTER_NAME")
+		if clusterName == "" {
+			clusterName = "in-cluster"
+		}
+		fmt.Printf("Connected to Kubernetes %s (%s)\n", version, clusterName)
+		if err := startServer(":8080", clientset, clusterName); err != nil {
 			panic(err)
 		}
 		return
