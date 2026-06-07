@@ -42,9 +42,10 @@ The same status code rules apply regardless of which format is requested.
 
 ## Test Environment
 
-8 deployments were created on kubernetes minikube
-
-![Deployments](test-deployments.png)
+A Kubernetes Minikube setup have 2 clusters was created on a Centos 10 VM on Oracle virtualbox.
+![Two Cluster Kubernete Minikube](two_cluster_minikube.png)
+![ClusterA](clusterA_deployment.png)
+![ClusterA](clusterB_deployment.png)
 
 ---
 
@@ -57,27 +58,64 @@ The same status code rules apply regardless of which format is requested.
 ```bash
 cd ~/tyk-sre-assignment/golang
 go run main.go --kubeconfig ~/.kube/config
-
-# Output:
-# Connected to Kubernetes v1.35.1
-# Server listening on :8080
 ```
 
-> The server must stay running in Terminal 1. Open a second terminal for all subsequent commands.
-
-**Terminal 2 — query the endpoints:**
+Note that "go run main.go --kubeconfig ~/.kube/config" takes 10 to 20 seconds to run.
+Compile it for faster startup.
 
 ```bash
-# Deployment health — JSON
-curl -s http://localhost:8080/deployments/health | jq .
+cd ~/tyk-sre-assignment/golang
+go build -o sre-tool .
+```
+You then run the tool simple by
+
+```bash
+cd ~/tyk-sre-assignment/golang
+./sre-tool
 ```
 
-**Browser:**
+The tool reads all contexts from the kubeconfig and presents an interactive selection:
+
 ```
-http://localhost:8080/deployments/health?format=html
-http://localhost:8080/deployments/health?format=table
-http://localhost:8080/healthz?format=html
+SRE Tool starting — reading cluster configuration...
+
+Available clusters:
+  [1] clusterA
+  [2] clusterB
+  [a] All clusters
+
+Select a cluster (1-2) or 'a' for all:
 ```
+
+Select a cluster by number or `a` for all. 
+The tool starts one server per selected cluster, it reports unavailable ports, and automatically finds the next available port from `:8080` upward:
+
+```
+Starting server for all clusters...
+=================================================================
+  Cluster: clusterA
+  URL:     http://localhost:8080  (Kubernetes v1.35.1)
+
+  From a second terminal run the following commands:
+    curl -s http://localhost:8080/deployments/health | jq .
+    curl -s http://localhost:8080/healthz | jq .
+    Browser: http://localhost:8080/deployments/health?format=html
+    Browser: http://localhost:8080/healthz?format=html
+Server listening on :8080
+=================================================================
+  Cluster: clusterB
+  URL:     http://localhost:8081  (Kubernetes v1.35.1)
+
+  From a second terminal run the following commands:
+    curl -s http://localhost:8081/deployments/health | jq .
+    curl -s http://localhost:8081/healthz | jq .
+    Browser: http://localhost:8081/deployments/health?format=html
+    Browser: http://localhost:8081/healthz?format=html
+Server listening on :8081
+=================================================================
+```
+
+> The server must stay running in Terminal 1. Open a second terminal to run the curl and browser commands printed above.
 
 ---
 
@@ -110,16 +148,16 @@ kubectl logs -l app.kubernetes.io/name=sre-tool
 
 # Get the minikube URL
 minikube service sre-tool --url
-# Example: http://192.168.49.2:30318
+# Example: http://192.*.*.*:30318
 
 # Query the endpoints using the minikube URL
-curl -s http://192.168.49.2:30318/deployments/health | jq .
-curl -s http://192.168.49.2:30318/healthz | jq .
+curl -s http://192.*.*.*:30318/deployments/health | jq .
+curl -s http://192.*.*.*:30318/healthz | jq .
 
 # Browser
-http://192.168.49.2:30318/deployments/health?format=html
-http://192.168.49.2:30318/deployments/health?format=table
-http://192.168.49.2:30318/healthz?format=html
+http://192.*.*.*:30318/deployments/health?format=html
+http://192.*.*.*:30318/deployments/health?format=table
+http://192.*.*.*:30318/healthz?format=html
 ```
 
 The warning `Neither --kubeconfig nor --master was specified` in the logs is harmless — it is `client-go` confirming it detected the in-cluster token and is using it.
@@ -185,52 +223,11 @@ curl -s http://localhost:8080/deployments/health | jq .
 
 ```json
 {
+  "cluster": "clusterA",
   "deployments": [
     {
       "name": "coredns",
       "namespace": "kube-system",
-      "desiredReplicas": 1,
-      "readyReplicas": 1,
-      "healthy": true
-    },
-    {
-      "name": "broken-app",
-      "namespace": "sre-test",
-      "desiredReplicas": 9,
-      "readyReplicas": 4,
-      "healthy": false
-    },
-    {
-      "name": "healthy-api",
-      "namespace": "sre-test",
-      "desiredReplicas": 3,
-      "readyReplicas": 3,
-      "healthy": true
-    },
-    {
-      "name": "healthy-single",
-      "namespace": "sre-test",
-      "desiredReplicas": 1,
-      "readyReplicas": 1,
-      "healthy": true
-    },
-    {
-      "name": "healthy-worker",
-      "namespace": "sre-test",
-      "desiredReplicas": 2,
-      "readyReplicas": 2,
-      "healthy": true
-    },
-    {
-      "name": "httpenv",
-      "namespace": "sre-test",
-      "desiredReplicas": 5,
-      "readyReplicas": 5,
-      "healthy": true
-    },
-    {
-      "name": "nginx",
-      "namespace": "sre-test",
       "desiredReplicas": 1,
       "readyReplicas": 1,
       "healthy": true
@@ -243,6 +240,20 @@ curl -s http://localhost:8080/deployments/health | jq .
       "healthy": true
     },
     {
+      "name": "httpenv",
+      "namespace": "sre-test",
+      "desiredReplicas": 5,
+      "readyReplicas": 5,
+      "healthy": true
+    },
+    {
+      "name": "low-mem-app",
+      "namespace": "sre-test",
+      "desiredReplicas": 3,
+      "readyReplicas": 0,
+      "healthy": false
+    },
+    {
       "name": "partially-degraded",
       "namespace": "sre-test",
       "desiredReplicas": 4,
@@ -251,10 +262,9 @@ curl -s http://localhost:8080/deployments/health | jq .
     }
   ],
   "allHealthy": false
-}
 ```
 
-The top-level `allHealthy` flag lets callers check cluster health in a single field without iterating the full list. Here it is `false` because `broken-app` (4 of 9 ready) and `partially-degraded` (3 of 4 ready) are degraded.
+The top-level `cluster` field identifies which cluster the response is for. The `allHealthy` flag lets callers check cluster health in a single field without iterating the full list.
 
 ---
 
@@ -265,6 +275,7 @@ The top-level `allHealthy` flag lets callers check cluster health in a single fi
 ![Deployment Health HTML dashboard showing summary cards for Total 9, Healthy 7, Degraded 2, and a table with green Healthy and orange Degraded badges per deployment](screenshot_html.png)
 
 The dashboard shows:
+- **Cluster name** in the page title — `Deployment Health — clusterA`
 - **Summary cards** — Total, Healthy (green), Degraded (orange) counts at a glance
 - **Per-deployment table** — Namespace, Name, Desired replicas, Ready replicas (orange when degraded), Status badge
 - **Auto-refresh** every 10 seconds — no manual reload needed
@@ -308,11 +319,19 @@ go test ./... -v
 --- PASS: TestDeploymentsHealthHandler_HTML_200 (0.00s)
 === RUN   TestDeploymentsHealthHandler_HTML_503
 --- PASS: TestDeploymentsHealthHandler_HTML_503 (0.00s)
+=== RUN   TestHealthzHandler_APIReachable
+--- PASS: TestHealthzHandler_APIReachable (0.00s)
+=== RUN   TestHealthzHandler_HTML_200
+--- PASS: TestHealthzHandler_HTML_200 (0.00s)
+=== RUN   TestHealthzHandler_APIUnreachable
+--- PASS: TestHealthzHandler_APIUnreachable (0.00s)
+=== RUN   TestHealthzHandler_HTML_503
+--- PASS: TestHealthzHandler_HTML_503 (0.00s)
 PASS
-ok      github.com/TykTechnologies/tyk-sre-assignment   0.135s
+ok      github.com/TykTechnologies/tyk-sre-assignment   0.454s
 ```
 
-All 12 tests run against a **fake in-memory Kubernetes client** — no cluster is required.
+All 16 tests run against a **fake in-memory Kubernetes client** — no cluster is required.
 
 ---
 
@@ -320,7 +339,9 @@ All 12 tests run against a **fake in-memory Kubernetes client** — no cluster i
 
 - **Business logic is separated from the HTTP layer.** `getDeploymentsHealth` accepts a `context.Context` and a `kubernetes.Interface` and returns a plain struct. This makes it trivially testable without spinning up an HTTP server.
 - **Three response formats share one handler.** `deploymentsHealthHandler` reads `?format=` and delegates to `renderJSON`, `renderHTML`, or `renderTable`. The HTTP status code (200 vs 503) is computed once and passed to whichever renderer is called.
-- **HTML rendering uses `html/template`.** Go's `html/template` package automatically escapes all values inserted into the page, preventing XSS attacks — no sanitisation code needed.
+- **HTML rendering uses `html/template`.** Go's `html/template` package automatically escapes all values inserted into the page.
 - **Auto-refresh.** A `<meta http-equiv="refresh" content="10">` tag in the HTML `<head>` instructs the browser to reload every 10 seconds, keeping the dashboard current without any client-side code.
 - **In memory test.** In memory tests use `fake.NewSimpleClientset()` from `k8s.io/client-go/kubernetes/fake` — an in-memory Kubernetes client that returns whatever objects you seed it with. This makes the test suite fast and fully self-contained.
 - **In-cluster authentication is automatic.** When no `--kubeconfig` flag is provided, `client-go` detects the pod's mounted service account token and uses it to authenticate — the same binary works both locally and inside the cluster without any code changes.
+- **Multi-cluster support.** At startup the tool reads all contexts from the kubeconfig file dynamically. The operator selects one cluster or all. One independent HTTP server is started per selected cluster, each automatically assigned the next available port from `:8080` upward. Adding a new cluster to the kubeconfig requires no code changes — it appears automatically in the selection list on the next run.
+- **Cluster name in responses.** Every JSON response and HTML dashboard title includes the cluster name so the operator always knows which cluster the data is for.
