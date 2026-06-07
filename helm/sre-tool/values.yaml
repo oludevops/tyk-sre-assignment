@@ -20,7 +20,7 @@ image:
   #   Always       — always pull from the registry (good for :latest)
   #   IfNotPresent — use the local cache if the image is already present
   #   Never        — never pull; fail if not already present
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
 
   # The image tag to deploy. Overridden by the CI/CD pipeline with the git SHA.
   # Using "latest" is convenient for development but not recommended for
