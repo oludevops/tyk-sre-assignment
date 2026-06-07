@@ -88,7 +88,7 @@ cd ~/tyk-sre-assignment/golang
 go run main.go --kubeconfig ~/.kube/config
 ```
 
-> Note: `go run main.go` takes 10-20 seconds because it compiles from source on every run. Build the binary once for faster subsequent starts:
+*Note:* `go run main.go` takes 10-20 seconds because it compiles from source on every run. Build the binary once for faster subsequent starts:
 
 ```bash
 cd ~/tyk-sre-assignment/golang
