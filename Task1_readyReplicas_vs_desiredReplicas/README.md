@@ -42,10 +42,35 @@ The same status code rules apply regardless of which format is requested.
 
 ## Test Environment
 
-A Kubernetes Minikube setup have 2 clusters was created on a Centos 10 VM on Oracle virtualbox.
-![Two Cluster Kubernete Minikube](two_cluster_minikube.png)
-![ClusterA](clusterA_deployment.png)
-![ClusterA](clusterB_deployment.png)
+A Kubernetes Minikube setup having 2 clusters was created on a Centos 10 VM.
+
+```bash
+minikube profile list
+```
+┌──────────┬────────┬─────────┬──────────────┬─────────┬────────┬───────┬────────────────┬────────────────────┐
+│ PROFILE  │ DRIVER │ RUNTIME │      IP      │ VERSION │ STATUS │ NODES │ ACTIVE PROFILE │ ACTIVE KUBECONTEXT │
+├──────────┼────────┼─────────┼──────────────┼─────────┼────────┼───────┼────────────────┼────────────────────┤
+│ clusterA │ docker │ docker  │ 192.168.49.2 │ v1.35.1 │ OK     │ 1     │ *              │ *                  │
+│ clusterB │ docker │ docker  │ 192.168.58.2 │ v1.35.1 │ OK     │ 1     │                │                    │
+└──────────┴────────┴─────────┴──────────────┴─────────┴────────┴───────┴────────────────┴────────────────────┘
+
+```bash
+kubectl get deployment -n sre-test --context=clusterA
+```
+NAME                 READY   UP-TO-DATE   AVAILABLE   AGE
+good-app             20/20   20           20          3h50m
+httpenv              5/5     5            5           3h50m
+low-mem-app          0/3     1            0           3h23m
+partially-degraded   3/4     2            3           3h50m
+
+```bash
+kubectl get deployment -n sre-test --context=clusterB
+```
+NAME           READY   UP-TO-DATE   AVAILABLE   AGE
+broken-app     0/3     3            0           3h42m
+healthy-app1   3/3     3            3           3h42m
+healthy-app2   2/2     2            2           3h42m
+healthy-web    5/5     5            5           3h42m
 
 ---
 
@@ -60,8 +85,8 @@ cd ~/tyk-sre-assignment/golang
 go run main.go --kubeconfig ~/.kube/config
 ```
 
-Note that "go run main.go --kubeconfig ~/.kube/config" takes 10 to 20 seconds to run.
-Compile it for faster startup.
+*Note* that "go run main.go --kubeconfig ~/.kube/config" takes 10 to 20 seconds to run.
+Compile it for faster runtime.
 
 ```bash
 cd ~/tyk-sre-assignment/golang
