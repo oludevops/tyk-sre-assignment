@@ -47,30 +47,33 @@ A Kubernetes Minikube setup having 2 clusters was created on a Centos 10 VM.
 ```bash
 minikube profile list
 ```
-┌──────────┬────────┬─────────┬──────────────┬─────────┬────────┬───────┬────────────────┬────────────────────┐
-│ PROFILE  │ DRIVER │ RUNTIME │      IP      │ VERSION │ STATUS │ NODES │ ACTIVE PROFILE │ ACTIVE KUBECONTEXT │
-├──────────┼────────┼─────────┼──────────────┼─────────┼────────┼───────┼────────────────┼────────────────────┤
-│ clusterA │ docker │ docker  │ 192.168.49.2 │ v1.35.1 │ OK     │ 1     │ *              │ *                  │
-│ clusterB │ docker │ docker  │ 192.168.58.2 │ v1.35.1 │ OK     │ 1     │                │                    │
-└──────────┴────────┴─────────┴──────────────┴─────────┴────────┴───────┴────────────────┴────────────────────┘
+
+| PROFILE  | DRIVER | RUNTIME | IP           | VERSION | STATUS | NODES | ACTIVE PROFILE | ACTIVE KUBECONTEXT |
+|----------|--------|---------|--------------|---------|--------|-------|----------------|--------------------|
+| clusterA | docker | docker  | 192.168.49.2 | v1.35.1 | OK     | 1     | *              | *                  |
+| clusterB | docker | docker  | 192.168.58.2 | v1.35.1 | OK     | 1     |                |                    |
 
 ```bash
 kubectl get deployment -n sre-test --context=clusterA
 ```
-NAME                 READY   UP-TO-DATE   AVAILABLE   AGE
-good-app             20/20   20           20          3h50m
-httpenv              5/5     5            5           3h50m
-low-mem-app          0/3     1            0           3h23m
-partially-degraded   3/4     2            3           3h50m
+
+| NAME               | READY | UP-TO-DATE | AVAILABLE | AGE   |
+|--------------------|-------|------------|-----------|-------|
+| good-app           | 20/20 | 20         | 20        | 3h50m |
+| httpenv            | 5/5   | 5          | 5         | 3h50m |
+| low-mem-app        | 0/3   | 1          | 0         | 3h23m |
+| partially-degraded | 3/4   | 2          | 3         | 3h50m |
 
 ```bash
 kubectl get deployment -n sre-test --context=clusterB
 ```
-NAME           READY   UP-TO-DATE   AVAILABLE   AGE
-broken-app     0/3     3            0           3h42m
-healthy-app1   3/3     3            3           3h42m
-healthy-app2   2/2     2            2           3h42m
-healthy-web    5/5     5            5           3h42m
+
+| NAME         | READY | UP-TO-DATE | AVAILABLE | AGE   |
+|--------------|-------|------------|-----------|-------|
+| broken-app   | 0/3   | 3          | 0         | 3h42m |
+| healthy-app1 | 3/3   | 3          | 3         | 3h42m |
+| healthy-app2 | 2/2   | 2          | 2         | 3h42m |
+| healthy-web  | 5/5   | 5          | 5         | 3h42m |
 
 ---
 
@@ -85,18 +88,12 @@ cd ~/tyk-sre-assignment/golang
 go run main.go --kubeconfig ~/.kube/config
 ```
 
-*Note* that "go run main.go --kubeconfig ~/.kube/config" takes 10 to 20 seconds to run.
-Compile it for faster runtime.
+> Note: `go run main.go` takes 10-20 seconds because it compiles from source on every run. Build the binary once for faster subsequent starts:
 
 ```bash
 cd ~/tyk-sre-assignment/golang
 go build -o sre-tool .
-```
-You then run the tool simple by
-
-```bash
-cd ~/tyk-sre-assignment/golang
-./sre-tool
+./sre-tool --kubeconfig ~/.kube/config
 ```
 
 The tool reads all contexts from the kubeconfig and presents an interactive selection:
@@ -112,8 +109,7 @@ Available clusters:
 Select a cluster (1-2) or 'a' for all:
 ```
 
-Select a cluster by number or `a` for all. 
-The tool starts one server per selected cluster, it reports unavailable ports, and automatically finds the next available port from `:8080` upward:
+Select a cluster by number or `a` for all. The tool starts one server per selected cluster, reports unavailable ports, and automatically finds the next available port from `:8080` upward:
 
 ```
 Starting server for all clusters...
@@ -173,16 +169,16 @@ kubectl logs -l app.kubernetes.io/name=sre-tool
 
 # Get the minikube URL
 minikube service sre-tool --url
-# Example: http://192.*.*.*:30318
+# Example: http://192.168.49.2:30318
 
 # Query the endpoints using the minikube URL
-curl -s http://192.*.*.*:30318/deployments/health | jq .
-curl -s http://192.*.*.*:30318/healthz | jq .
+curl -s http://192.168.49.2:30318/deployments/health | jq .
+curl -s http://192.168.49.2:30318/healthz | jq .
 
 # Browser
-http://192.*.*.*:30318/deployments/health?format=html
-http://192.*.*.*:30318/deployments/health?format=table
-http://192.*.*.*:30318/healthz?format=html
+http://192.168.49.2:30318/deployments/health?format=html
+http://192.168.49.2:30318/deployments/health?format=table
+http://192.168.49.2:30318/healthz?format=html
 ```
 
 The warning `Neither --kubeconfig nor --master was specified` in the logs is harmless — it is `client-go` confirming it detected the in-cluster token and is using it.
@@ -287,6 +283,7 @@ curl -s http://localhost:8080/deployments/health | jq .
     }
   ],
   "allHealthy": false
+}
 ```
 
 The top-level `cluster` field identifies which cluster the response is for. The `allHealthy` flag lets callers check cluster health in a single field without iterating the full list.
