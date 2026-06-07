@@ -26,6 +26,25 @@ func main() {
 	kubeconfig := flag.String("kubeconfig", "", "path to kubeconfig, leave empty for in-cluster")
 	flag.Parse()
 
+	// If no kubeconfig is provided, the tool is running inside the cluster.
+	// Skip the interactive prompt and start automatically on :8080.
+	if *kubeconfig == "" {
+		fmt.Println("Running inside cluster — using in-cluster service account token.")
+		clientset, err := buildClientsetForContext("", "")
+		if err != nil {
+			panic(err)
+		}
+		version, err := getKubernetesVersion(clientset)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Printf("Connected to Kubernetes %s\n", version)
+		if err := startServer(":8080", clientset, "in-cluster"); err != nil {
+			panic(err)
+		}
+		return
+	}
+
 	// Print immediately so the operator knows the tool has started.
 	fmt.Println("SRE Tool starting — reading cluster configuration...")
 
