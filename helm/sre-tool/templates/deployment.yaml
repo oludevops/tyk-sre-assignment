@@ -55,9 +55,6 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
 
-          env:
-            - name: CLUSTER_NAME
-              value: {{ .Values.clusterName | quote }}
           ports:
             # The port the Go HTTP server listens on inside the container.
             - name: http

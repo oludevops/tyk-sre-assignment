@@ -46,11 +46,6 @@ service:
   # The port the container listens on — must match what the Go server binds to.
   targetPort: 8080
 
-# The name of the cluster this instance is monitoring.
-# Set this when installing to identify which cluster the tool is running in.
-# Example: helm install sre-tool ./helm/sre-tool --set clusterName=clusterA
-clusterName: "default"
-
 # Resource requests and limits for the pod.
 # requests — the minimum resources Kubernetes guarantees the pod.
 # limits   — the maximum resources the pod is allowed to use.
