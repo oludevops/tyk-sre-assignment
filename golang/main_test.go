@@ -47,7 +47,7 @@ func TestHealthHandler(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
 
-	healthHandler(fake.NewSimpleClientset())(rec, req)
+	healthHandler(fake.NewSimpleClientset(), "test-cluster")(rec, req)
 
 	res := rec.Result()
 	defer res.Body.Close()
@@ -90,7 +90,7 @@ func indexByName(statuses []DeploymentStatus) map[string]DeploymentStatus {
 // ---------------------------------------------------------------------------
 
 func TestGetDeploymentsHealth_NoDeployments(t *testing.T) {
-	report, err := getDeploymentsHealth(context.Background(), fake.NewSimpleClientset())
+	report, err := getDeploymentsHealth(context.Background(), fake.NewSimpleClientset(), "test-cluster")
 	require.NoError(t, err)
 	assert.True(t, report.AllHealthy)
 	assert.Empty(t, report.Deployments)
@@ -101,7 +101,7 @@ func TestGetDeploymentsHealth_AllHealthy(t *testing.T) {
 	d2 := makeDeployment("monitoring", "prometheus", 1, 1)
 	clientset := fake.NewSimpleClientset(&d1, &d2)
 
-	report, err := getDeploymentsHealth(context.Background(), clientset)
+	report, err := getDeploymentsHealth(context.Background(), clientset, "test-cluster")
 	require.NoError(t, err)
 	assert.True(t, report.AllHealthy)
 	assert.Len(t, report.Deployments, 2)
@@ -117,7 +117,7 @@ func TestGetDeploymentsHealth_PartiallyUnhealthy(t *testing.T) {
 	unhealthy := makeDeployment("default", "worker", 3, 1)
 	clientset := fake.NewSimpleClientset(&healthy, &unhealthy)
 
-	report, err := getDeploymentsHealth(context.Background(), clientset)
+	report, err := getDeploymentsHealth(context.Background(), clientset, "test-cluster")
 	require.NoError(t, err)
 	assert.False(t, report.AllHealthy)
 
@@ -134,7 +134,7 @@ func TestGetDeploymentsHealth_ZeroDesiredReplicas(t *testing.T) {
 	scaled := makeDeployment("default", "batch-job", 0, 0)
 	clientset := fake.NewSimpleClientset(&scaled)
 
-	report, err := getDeploymentsHealth(context.Background(), clientset)
+	report, err := getDeploymentsHealth(context.Background(), clientset, "test-cluster")
 	require.NoError(t, err)
 	assert.False(t, report.AllHealthy)
 	assert.False(t, indexByName(report.Deployments)["batch-job"].Healthy)
@@ -145,7 +145,7 @@ func TestGetDeploymentsHealth_MultiNamespace(t *testing.T) {
 	d2 := makeDeployment("team-b", "backend", 2, 0)
 	clientset := fake.NewSimpleClientset(&d1, &d2)
 
-	report, err := getDeploymentsHealth(context.Background(), clientset)
+	report, err := getDeploymentsHealth(context.Background(), clientset, "test-cluster")
 	require.NoError(t, err)
 	assert.False(t, report.AllHealthy)
 	assert.Len(t, report.Deployments, 2)
@@ -161,7 +161,7 @@ func TestDeploymentsHealthHandler_AllHealthy(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/deployments/health", nil)
 	rec := httptest.NewRecorder()
-	deploymentsHealthHandler(clientset)(rec, req)
+	deploymentsHealthHandler(clientset, "test-cluster")(rec, req)
 
 	res := rec.Result()
 	defer res.Body.Close()
@@ -181,7 +181,7 @@ func TestDeploymentsHealthHandler_Unhealthy(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/deployments/health", nil)
 	rec := httptest.NewRecorder()
-	deploymentsHealthHandler(clientset)(rec, req)
+	deploymentsHealthHandler(clientset, "test-cluster")(rec, req)
 
 	res := rec.Result()
 	defer res.Body.Close()
@@ -196,7 +196,7 @@ func TestDeploymentsHealthHandler_Unhealthy(t *testing.T) {
 func TestDeploymentsHealthHandler_NoDeployments(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/deployments/health", nil)
 	rec := httptest.NewRecorder()
-	deploymentsHealthHandler(fake.NewSimpleClientset())(rec, req)
+	deploymentsHealthHandler(fake.NewSimpleClientset(), "test-cluster")(rec, req)
 
 	res := rec.Result()
 	defer res.Body.Close()
@@ -219,7 +219,7 @@ func TestDeploymentsHealthHandler_HTML_200(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/deployments/health?format=html", nil)
 	rec := httptest.NewRecorder()
-	deploymentsHealthHandler(clientset)(rec, req)
+	deploymentsHealthHandler(clientset, "test-cluster")(rec, req)
 
 	res := rec.Result()
 	defer res.Body.Close()
@@ -234,7 +234,7 @@ func TestDeploymentsHealthHandler_HTML_503(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/deployments/health?format=html", nil)
 	rec := httptest.NewRecorder()
-	deploymentsHealthHandler(clientset)(rec, req)
+	deploymentsHealthHandler(clientset, "test-cluster")(rec, req)
 
 	res := rec.Result()
 	defer res.Body.Close()
@@ -250,7 +250,7 @@ func TestDeploymentsHealthHandler_HTML_503(t *testing.T) {
 func TestHealthzHandler_APIReachable(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
-	healthHandler(fake.NewSimpleClientset())(rec, req)
+	healthHandler(fake.NewSimpleClientset(), "test-cluster")(rec, req)
 
 	res := rec.Result()
 	defer res.Body.Close()
@@ -268,7 +268,7 @@ func TestHealthzHandler_APIReachable(t *testing.T) {
 func TestHealthzHandler_HTML_200(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/healthz?format=html", nil)
 	rec := httptest.NewRecorder()
-	healthHandler(fake.NewSimpleClientset())(rec, req)
+	healthHandler(fake.NewSimpleClientset(), "test-cluster")(rec, req)
 
 	res := rec.Result()
 	defer res.Body.Close()
@@ -301,7 +301,7 @@ func TestHealthzHandler_APIUnreachable(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
-	healthHandler(client)(rec, req)
+	healthHandler(client, "test-cluster")(rec, req)
 
 	res := rec.Result()
 	defer res.Body.Close()
@@ -321,7 +321,7 @@ func TestHealthzHandler_HTML_503(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz?format=html", nil)
 	rec := httptest.NewRecorder()
-	healthHandler(client)(rec, req)
+	healthHandler(client, "test-cluster")(rec, req)
 
 	res := rec.Result()
 	defer res.Body.Close()

@@ -2,12 +2,19 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"html/template"
+	"net"
 	"net/http"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -17,29 +24,177 @@ import (
 
 func main() {
 	kubeconfig := flag.String("kubeconfig", "", "path to kubeconfig, leave empty for in-cluster")
-	listenAddr := flag.String("address", ":8080", "HTTP server listen address")
 	flag.Parse()
 
-	kConfig, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+	// Print immediately so the operator knows the tool has started.
+	fmt.Println("SRE Tool starting — reading cluster configuration...")
+
+	// Run dots in the background while listContexts loads the kubeconfig.
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				fmt.Print(".")
+				time.Sleep(300 * time.Millisecond)
+			}
+		}
+	}()
+
+	// List all contexts available in the kubeconfig.
+	contexts, err := listContexts(*kubeconfig)
+
+	// Stop the dots, clear the dot line, move to a new line.
+	close(done)
+	time.Sleep(350 * time.Millisecond) // give the goroutine time to stop
+	fmt.Print("\r                    \r") // overwrite any printed dots with spaces
+
 	if err != nil {
 		panic(err)
 	}
 
-	clientset, err := kubernetes.NewForConfig(kConfig)
+	// Ask the operator which cluster(s) to monitor.
+	selected := promptClusterSelection(contexts)
+
+	// Start one server per selected cluster, each on its own port.
+	var wg sync.WaitGroup
+	startPort := 8080
+
+	for _, ctx := range selected {
+		// Build a clientset for this context.
+		clientset, err := buildClientsetForContext(*kubeconfig, ctx)
+		if err != nil {
+			fmt.Printf("  error connecting to %s: %v\n", ctx, err)
+			continue
+		}
+
+		// Verify connectivity.
+		version, err := getKubernetesVersion(clientset)
+		if err != nil {
+			fmt.Printf("  error reaching API server for %s: %v\n", ctx, err)
+			continue
+		}
+
+		// Find the next available port.
+		port, err := findAvailablePort(startPort)
+		if err != nil {
+			fmt.Printf("  no available port for %s: %v\n", ctx, err)
+			continue
+		}
+		startPort = port + 1 // next cluster starts searching from the port after this one
+
+		addr := fmt.Sprintf(":%d", port)
+		fmt.Println("=================================================================")
+		fmt.Printf("  Cluster: %s\n", ctx)
+		fmt.Printf("  URL:     http://localhost%s  (Kubernetes %s)\n", addr, version)
+		fmt.Printf("\n  From a second terminal run the following commands:\n")
+		fmt.Printf("    curl -s http://localhost%s/deployments/health | jq .\n", addr)
+		fmt.Printf("    curl -s http://localhost%s/healthz | jq .\n", addr)
+		fmt.Printf("    Browser: http://localhost%s/deployments/health?format=html\n", addr)
+		fmt.Printf("    Browser: http://localhost%s/healthz?format=html\n", addr)
+
+		wg.Add(1)
+		go func(address string, cs kubernetes.Interface, name string) {
+			defer wg.Done()
+			if err := startServer(address, cs, name); err != nil {
+				fmt.Printf("server error on %s: %v\n", address, err)
+			}
+		}(addr, clientset, ctx)
+	}
+
+	wg.Wait()
+}
+
+// listContexts reads all context names from the kubeconfig file.
+// If no kubeconfig path is given it uses the default discovery rules
+// (KUBECONFIG env var, then ~/.kube/config).
+func listContexts(kubeconfigPath string) ([]string, error) {
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if kubeconfigPath != "" {
+		loadingRules.ExplicitPath = kubeconfigPath
+	}
+
+	config, err := loadingRules.Load()
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("loading kubeconfig: %w", err)
 	}
 
-	version, err := getKubernetesVersion(clientset)
+	contexts := make([]string, 0, len(config.Contexts))
+	for name := range config.Contexts {
+		contexts = append(contexts, name)
+	}
+	sort.Strings(contexts)
+	return contexts, nil
+}
+
+// promptClusterSelection prints the list of available contexts and asks the
+// operator to select one or all. Returns the slice of selected context names.
+func promptClusterSelection(contexts []string) []string {
+	fmt.Println("\nAvailable clusters:")
+	for i, ctx := range contexts {
+		fmt.Printf("  [%d] %s\n", i+1, ctx)
+	}
+	fmt.Printf("  [a] All clusters\n")
+	fmt.Printf("\nSelect a cluster (1-%d) or 'a' for all: ", len(contexts))
+
+	reader := bufio.NewReader(os.Stdin)
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(input)
+
+	if input == "a" || input == "all" {
+		fmt.Println("\nStarting server for all clusters...")
+		return contexts
+	}
+
+	for {
+		n, err := strconv.Atoi(input)
+		if err == nil && n >= 1 && n <= len(contexts) {
+			return []string{contexts[n-1]}
+		}
+		fmt.Printf("Invalid selection %q — please enter a number between 1 and %d or 'a' for all: ", input, len(contexts))
+		input, _ = reader.ReadString('\n')
+		input = strings.TrimSpace(input)
+		if input == "a" || input == "all" {
+			fmt.Println("\nStarting server for all clusters...")
+			return contexts
+		}
+	}
+}
+
+// buildClientsetForContext builds a Kubernetes clientset for a specific
+// named context in the kubeconfig.
+func buildClientsetForContext(kubeconfigPath, contextName string) (kubernetes.Interface, error) {
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if kubeconfigPath != "" {
+		loadingRules.ExplicitPath = kubeconfigPath
+	}
+
+	kConfig, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		loadingRules,
+		&clientcmd.ConfigOverrides{CurrentContext: contextName},
+	).ClientConfig()
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("building config for context %s: %w", contextName, err)
 	}
 
-	fmt.Printf("Connected to Kubernetes %s\n", version)
+	return kubernetes.NewForConfig(kConfig)
+}
 
-	if err := startServer(*listenAddr, clientset); err != nil {
-		panic(err)
+// findAvailablePort tries ports starting from start until it finds one that
+// is not already in use. It tries up to 100 ports before giving up.
+func findAvailablePort(start int) (int, error) {
+	for port := start; port < start+100; port++ {
+		addr := fmt.Sprintf(":%d", port)
+		ln, err := net.Listen("tcp", addr)
+		if err == nil {
+			ln.Close()
+			return port, nil
+		}
+		fmt.Printf("  :%d in use — skipping\n", port)
 	}
+	return 0, fmt.Errorf("no available port found in range %d-%d", start, start+100)
 }
 
 // getKubernetesVersion returns the GitVersion of the Kubernetes API server.
@@ -53,15 +208,20 @@ func getKubernetesVersion(clientset kubernetes.Interface) (string, error) {
 }
 
 // startServer registers HTTP routes and starts listening. It blocks until the server stops.
-func startServer(listenAddr string, clientset kubernetes.Interface) error {
-	http.HandleFunc("/healthz", healthHandler(clientset))
-	http.HandleFunc("/deployments/health", deploymentsHealthHandler(clientset))
+// Each call creates its own ServeMux so multiple servers can run concurrently
+// without conflicting over the global default mux.
+func startServer(listenAddr string, clientset kubernetes.Interface, clusterName string) error {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", healthHandler(clientset, clusterName))
+	mux.HandleFunc("/deployments/health", deploymentsHealthHandler(clientset, clusterName))
 	fmt.Printf("Server listening on %s\n", listenAddr)
-	return http.ListenAndServe(listenAddr, nil)
+	fmt.Println("=================================================================")
+	return http.ListenAndServe(listenAddr, mux)
 }
 
 // HealthzStatus is the JSON response body for GET /healthz.
 type HealthzStatus struct {
+	Cluster   string `json:"cluster"`
 	Status    string `json:"status"`
 	APIServer string `json:"apiServer"`
 	LatencyMs int64  `json:"latencyMs"`
@@ -123,7 +283,7 @@ var healthzHTMLTemplate = template.Must(template.New("healthz").Parse(`<!DOCTYPE
 	</style>
 </head>
 <body>
-<h1>API Server Health</h1>
+<h1>API Server Health — {{ .Cluster }}</h1>
 <div class="status-card">
 	{{ if eq .Status "ok" }}
 	<div class="status-indicator">
@@ -159,7 +319,7 @@ var healthzHTMLTemplate = template.Must(template.New("healthz").Parse(`<!DOCTYPE
 
 // healthHandler probes the Kubernetes API server on every request and returns
 // 200 when reachable, 503 when not. Supports ?format=html for a visual dashboard.
-func healthHandler(clientset kubernetes.Interface) http.HandlerFunc {
+func healthHandler(clientset kubernetes.Interface, clusterName string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		_, err := clientset.Discovery().ServerVersion()
@@ -170,6 +330,7 @@ func healthHandler(clientset kubernetes.Interface) http.HandlerFunc {
 
 		if err == nil {
 			status = HealthzStatus{
+				Cluster:   clusterName,
 				Status:    "ok",
 				APIServer: "reachable",
 				LatencyMs: latencyMs,
@@ -178,6 +339,7 @@ func healthHandler(clientset kubernetes.Interface) http.HandlerFunc {
 			statusCode = http.StatusOK
 		} else {
 			status = HealthzStatus{
+				Cluster:   clusterName,
 				Status:    "degraded",
 				APIServer: "unreachable",
 				LatencyMs: 0,
@@ -215,19 +377,21 @@ type DeploymentStatus struct {
 
 // DeploymentsHealthReport is the top-level response for GET /deployments/health.
 type DeploymentsHealthReport struct {
+	Cluster     string             `json:"cluster"`
 	Deployments []DeploymentStatus `json:"deployments"`
 	AllHealthy  bool               `json:"allHealthy"`
 }
 
 // getDeploymentsHealth lists all Deployments across every namespace and evaluates
 // whether each one has the expected number of ready pods.
-func getDeploymentsHealth(ctx context.Context, clientset kubernetes.Interface) (*DeploymentsHealthReport, error) {
+func getDeploymentsHealth(ctx context.Context, clientset kubernetes.Interface, clusterName string) (*DeploymentsHealthReport, error) {
 	deploymentList, err := clientset.AppsV1().Deployments(metav1.NamespaceAll).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("listing deployments: %w", err)
 	}
 
 	report := &DeploymentsHealthReport{
+		Cluster:     clusterName,
 		Deployments: make([]DeploymentStatus, 0, len(deploymentList.Items)),
 		AllHealthy:  true,
 	}
@@ -261,9 +425,9 @@ func getDeploymentsHealth(ctx context.Context, clientset kubernetes.Interface) (
 // deploymentsHealthHandler returns deployment health across all namespaces.
 // Supports ?format=html for a dashboard view and ?format=table for a spreadsheet view.
 // Returns 200 when all deployments are healthy, 503 when any are degraded.
-func deploymentsHealthHandler(clientset kubernetes.Interface) http.HandlerFunc {
+func deploymentsHealthHandler(clientset kubernetes.Interface, clusterName string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		report, err := getDeploymentsHealth(r.Context(), clientset)
+		report, err := getDeploymentsHealth(r.Context(), clientset, clusterName)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("failed to retrieve deployments: %v", err), http.StatusInternalServerError)
 			return
@@ -296,6 +460,7 @@ func renderJSON(w http.ResponseWriter, report *DeploymentsHealthReport, statusCo
 
 // htmlTemplateData is passed into the HTML and table templates.
 type htmlTemplateData struct {
+	Cluster       string
 	Deployments   []DeploymentStatus
 	Total         int
 	HealthyCount  int
@@ -384,7 +549,7 @@ var htmlTemplate = template.Must(template.New("dashboard").Parse(`<!DOCTYPE html
 	</style>
 </head>
 <body>
-<h1>Deployment Health</h1>
+<h1>Deployment Health — {{ .Cluster }}</h1>
 <div class="cards">
 	<div class="card">
 		<div class="card-label">Total</div>
@@ -448,6 +613,7 @@ func renderHTML(w http.ResponseWriter, report *DeploymentsHealthReport, statusCo
 	}
 
 	data := htmlTemplateData{
+		Cluster:       report.Cluster,
 		Deployments:   report.Deployments,
 		Total:         len(report.Deployments),
 		HealthyCount:  healthyCount,
@@ -527,7 +693,7 @@ var tableTemplate = template.Must(template.New("spreadsheet").Parse(`<!DOCTYPE h
 	</style>
 </head>
 <body>
-<h1>Deployment Health</h1>
+<h1>Deployment Health — {{ .Cluster }}</h1>
 <div class="cards">
 	<div class="card">
 		<div class="card-label">Total</div>
@@ -591,6 +757,7 @@ func renderTable(w http.ResponseWriter, report *DeploymentsHealthReport, statusC
 	}
 
 	data := htmlTemplateData{
+		Cluster:       report.Cluster,
 		Deployments:   report.Deployments,
 		Total:         len(report.Deployments),
 		HealthyCount:  healthyCount,
