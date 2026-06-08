@@ -70,10 +70,10 @@ kubectl get deployment -n sre-test --context=clusterB
 
 | NAME         | READY | UP-TO-DATE | AVAILABLE | AGE   |
 |--------------|-------|------------|-----------|-------|
-| broken-app   | 0/3   | 3          | 0         | 3h42m |
-| healthy-app1 | 3/3   | 3          | 3         | 3h42m |
-| healthy-app2 | 2/2   | 2          | 2         | 3h42m |
-| healthy-web  | 5/5   | 5          | 5         | 3h42m |
+| healthy-app1 | 3/3   | 3          | 3         | 13h   |
+| healthy-app2 | 2/2   | 2          | 2         | 13h   |
+| healthy-web  | 5/5   | 5          | 5         | 13h   |
+| low-cpu-app  | 0/3   | 3          | 0         | 3m1s  |
 
 ---
 
@@ -88,7 +88,7 @@ cd ~/tyk-sre-assignment/golang
 go run main.go --kubeconfig ~/.kube/config
 ```
 
-*Note:* `go run main.go` takes 10-20 seconds because it compiles from source on every run. Build the binary once for faster subsequent starts:
+> Note: `go run main.go` takes 10-20 seconds because it compiles from source on every run. Build the binary once for faster subsequent starts:
 
 ```bash
 cd ~/tyk-sre-assignment/golang
@@ -136,15 +136,15 @@ Server listening on :8081
 =================================================================
 ```
 
-The server must stay running in Terminal 1. Open a second terminal to run the curl and browser commands printed above.
+> The server must stay running in Terminal 1. Open a second terminal to run the curl and browser commands printed above.
 
 ---
 
 ### Inside the cluster — minikube
 
-When deployed as a pod via Helm, the tool runs without any flags. Kubernetes automatically mounts a service account token into the pod at `/var/run/secrets/kubernetes.io/serviceaccount/token`. The `client-go` library detects this token and uses it to authenticate against the API server, no `--kubeconfig` needed.
+When deployed as a pod via Helm, the tool runs without any flags. Kubernetes automatically mounts a service account token into the pod at `/var/run/secrets/kubernetes.io/serviceaccount/token`. The `client-go` library detects this token and uses it to authenticate against the API server — no `--kubeconfig` needed.
 
-All `helm` commands must be run from the repo root (`~/tyk-sre-assignment`).
+> All `helm` commands must be run from the repo root (`~/tyk-sre-assignment`).
 
 ```bash
 cd ~/tyk-sre-assignment
