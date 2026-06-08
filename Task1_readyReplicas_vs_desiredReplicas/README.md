@@ -70,10 +70,10 @@ kubectl get deployment -n sre-test --context=clusterB
 
 | NAME         | READY | UP-TO-DATE | AVAILABLE | AGE   |
 |--------------|-------|------------|-----------|-------|
-| healthy-app1 | 3/3   | 3          | 3         | 13h   |
-| healthy-app2 | 2/2   | 2          | 2         | 13h   |
-| healthy-web  | 5/5   | 5          | 5         | 13h   |
-| low-cpu-app  | 0/3   | 3          | 0         | 3m1s  |
+| healthy-app1 | 3/3   | 3          | 3         | 4m21s |
+| healthy-app2 | 2/2   | 2          | 2         | 4m18s |
+| healthy-web  | 5/5   | 5          | 5         | 4m17s |
+| low-cpu-app  | 0/3   | 3          | 0         | 4m15s |
 
 ---
 
