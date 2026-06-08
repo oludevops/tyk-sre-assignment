@@ -68,12 +68,12 @@ kubectl get deployment -n sre-test --context=clusterA
 kubectl get deployment -n sre-test --context=clusterB
 ```
 
-| NAME         | READY | UP-TO-DATE | AVAILABLE | AGE   |
-|--------------|-------|------------|-----------|-------|
-| healthy-app1 | 3/3   | 3          | 3         | 4m21s |
-| healthy-app2 | 2/2   | 2          | 2         | 4m18s |
-| healthy-web  | 5/5   | 5          | 5         | 4m17s |
-| low-cpu-app  | 0/3   | 3          | 0         | 4m15s |
+| NAME         | READY | UP-TO-DATE | AVAILABLE | AGE |
+|--------------|-------|------------|-----------|-----|
+| healthy-app1 | 3/3   | 3          | 3         | 14m |
+| healthy-app2 | 2/2   | 2          | 2         | 14m |
+| healthy-web  | 5/5   | 5          | 5         | 14m |
+| low-cpu-app  | 2/3   | 1          | 2         | 14m |
 
 ---
 
