@@ -159,7 +159,7 @@ docker pull ghcr.io/oludevops/sre-tool:latest
 helm list
 ```
 
-Run **one** of the following depending on your situation:
+Run **one** of the following depending on the situation:
 
 ```bash
 # OPTION 1 — Single cluster, first time install
