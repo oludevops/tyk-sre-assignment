@@ -44,6 +44,7 @@ USER sreuser
 EXPOSE 8080
 ENTRYPOINT ["sre-tool"]
 ```
+
 **Final image size: ~17MB** vs ~600MB if the Go toolchain were included.
 
 ---
@@ -105,6 +106,30 @@ The workflow at `.github/workflows/docker-publish.yml` triggers on every push to
 
 The SHA tag is what you pass to `helm upgrade --set image.tag=sha-abc1234` so you always know exactly which commit is running in the cluster.
 
+**How to find the correct SHA tag:**
+
+Option 1 — From the GitHub Actions run:
+1. Go to `https://github.com/oludevops/tyk-sre-assignment/actions`
+2. Click the latest successful **Build and Push Docker Image** run
+3. Click **Build and push Docker image** step
+4. Look for a line like `sha-655ee23` in the output — that is your tag
+
+Option 2 — From the terminal:
+```bash
+# Get the short SHA of the latest commit
+git log --oneline -1
+# Example output: 655ee23 fix: use rest.InClusterConfig directly
+
+# The image tag is sha- prefixed:
+# ghcr.io/oludevops/sre-tool:sha-655ee23
+```
+
+Option 3 — From the container registry:
+```
+https://github.com/oludevops?tab=packages
+```
+Click `sre-tool` → all available tags are listed there.
+
 ---
 
 ## Deployment — Step by Step
@@ -125,24 +150,9 @@ To verify the image is available:
 docker pull ghcr.io/oludevops/sre-tool:latest
 ```
 
-**Manual build and push (only needed if GitHub Actions failed or you have local changes not yet pushed):**
-
-```bash
-# Create a Personal Access Token at https://github.com/settings/tokens
-# with write:packages and read:packages scopes, then:
-export GITHUB_TOKEN=ghp_yourtoken
-
-# Log in to the GitHub Container Registry
-echo $GITHUB_TOKEN | docker login ghcr.io -u oludevops --password-stdin
-
-# Build and push — run from the repo root
-docker build -t ghcr.io/oludevops/sre-tool:latest golang/
-docker push ghcr.io/oludevops/sre-tool:latest
-```
-
 ### Step 2 — Install or upgrade the Helm chart
 
-All `helm` commands must be run from the repo root (`~/tyk-sre-assignment`).
+> All `helm` commands must be run from the repo root (`~/tyk-sre-assignment`).
 
 ```bash
 # Check if already installed
@@ -152,89 +162,164 @@ helm list
 Run **one** of the following depending on your situation:
 
 ```bash
-# OPTION 1 — First time install (default settings)
-helm install sre-tool ./helm/sre-tool
+# OPTION 1 — Single cluster, first time install
+helm install sre-tool ./helm/sre-tool --set clusterName=<your-cluster-name>
 
-# OPTION 2 — Already installed — upgrade instead
-helm upgrade sre-tool ./helm/sre-tool
+# OPTION 2 — Single cluster, already installed — upgrade instead
+helm upgrade sre-tool ./helm/sre-tool --set clusterName=<your-cluster-name>
 
-# OPTION 3 — First time install pinned to a specific image version
-# The SHA comes from the GitHub Actions run:
-# https://github.com/<github-account-name>/tyk-sre-assignment/actions
-# Click the latest successful build → look for the sha-xxxxxxx tag in th
+# OPTION 3 — Multiple clusters — deploy one instance per cluster
+# Each instance monitors only the cluster it is deployed in.
+# Adding a new cluster requires one helm install command — no code changes needed.
+helm install sre-tool ./helm/sre-tool --set clusterName=clusterA --kube-context clusterA
+helm install sre-tool ./helm/sre-tool --set clusterName=clusterB --kube-context clusterB
+
+# Adding a new cluster (e.g. clusterC) — three steps:
+#
+# Step 1 — Ensure kubectl can reach the new cluster
+kubectl config get-contexts
+# clusterC should appear in the list. If not, add it:
+# aws eks update-kubeconfig --region <region> --name clusterC   # for EKS
+# minikube start --profile clusterC                             # for minikube
+#
+# Step 2 — Deploy the tool to the new cluster
+helm install sre-tool ./helm/sre-tool --set clusterName=clusterC --kube-context clusterC
+#
+# Step 3 — Verify the pod is running and get the URL
+kubectl get pods -l app.kubernetes.io/name=sre-tool --context=clusterC
+minikube service sre-tool --url --profile clusterC   # minikube
+# kubectl get svc sre-tool --context=clusterC        # EKS — wait for EXTERNAL-IP
+
+# OPTION 4 — First time install pinned to a specific image version
+# The SHA comes from: https://github.com/oludevops/tyk-sre-assignment/actions
+# Click the latest successful build → look for the sha-xxxxxxx tag in the output.
 # Or get it from the terminal: git log --oneline -1
-helm install sre-tool ./helm/sre-tool --set image.tag=sha-abc1234
+helm install sre-tool ./helm/sre-tool --set clusterName=clusterA --set image.tag=sha-abc1234 --kube-context clusterA
 
-# OPTION 4 — First time install into a dedicated namespace
-kubectl create namespace sre
-helm install sre-tool ./helm/sre-tool --namespace sre
+# OPTION 5 — Install into a dedicated namespace
+kubectl create namespace <your-namespace> --context=<your-context>
+helm install sre-tool ./helm/sre-tool \
+  --set clusterName=<your-cluster-name> \
+  --kube-context <your-context> \
+  --namespace <your-namespace>
 ```
 
 ### Step 3 — Verify the deployment
 
 ```bash
+# Single cluster
 kubectl get pods -l app.kubernetes.io/name=sre-tool
 kubectl get svc sre-tool
 kubectl get clusterrole sre-tool-role
 kubectl get clusterrolebinding sre-tool-rolebinding
+```
 
-# Check logs to confirm in-cluster auth worked
-kubectl logs -l app.kubernetes.io/name=sre-tool
+Multi-cluster — check each cluster separately:
+
+```bash
+kubectl get pods -l app.kubernetes.io/name=sre-tool --context=clusterA
+```
+
+```
+NAME                       READY   STATUS    RESTARTS   AGE
+sre-tool-54c489599-lsmrp   1/1     Running   0          3h15m
+```
+
+```bash
+kubectl get pods -l app.kubernetes.io/name=sre-tool --context=clusterB
+```
+
+```
+NAME                        READY   STATUS    RESTARTS   AGE
+sre-tool-845594b798-46xmn   1/1     Running   0          3h16m
+```
+
+```bash
+# Check logs to confirm in-cluster auth and cluster name
+kubectl logs -l app.kubernetes.io/name=sre-tool --context=clusterA
 # Expected:
-# Connected to Kubernetes v1.x.x
+# Running inside cluster — using in-cluster service account token.
+# Connected to Kubernetes v1.x.x (clusterA)
+# Server listening on :8080
+
+kubectl logs -l app.kubernetes.io/name=sre-tool --context=clusterB
+# Expected:
+# Running inside cluster — using in-cluster service account token.
+# Connected to Kubernetes v1.x.x (clusterB)
 # Server listening on :8080
 ```
 
 ### Step 4 — Access the endpoints
 
-**On minikube:**
+**On minikube — multiple clusters:**
 
 ```bash
-# Install with NodePort override
-helm install sre-tool ./helm/sre-tool --set service.type=NodePort
+# Get the URLs first
+minikube service sre-tool --url --profile clusterA
+minikube service sre-tool --url --profile clusterB
+```
 
-# Get the URL
-minikube service sre-tool --url
-# Prints: http://192.*.*.*:30318
+**clusterA:**
 
-curl -s http://192.*.*.*:30318/healthz | jq .
-curl -s http://192.*.*.*:30318/deployments/health | jq .
+```bash
+curl -s http://192.*.*.*:31842/deployments/health | jq .
+curl -s http://192.*.*.*:31842/healthz | jq .
+```
 
+```
 # Browser
-http://192.*.*.*:30318/healthz?format=html
-http://192.*.*.*:30318/deployments/health?format=html
-http://192.*.*.*:30318/deployments/health?format=table
+http://192.*.*.*:31842/deployments/health?format=html
+http://192.*.*.*:31842/deployments/health?format=table
+http://192.*.*.*:31842/healthz?format=html
+```
+
+**clusterB:**
+
+```bash
+curl -s http://192.*.*.*:31298/deployments/health | jq .
+curl -s http://192.*.*.*:31298/healthz | jq .
+```
+
+```
+# Browser
+http://192.*.*.*:31298/deployments/health?format=html
+http://192.*.*.*:31298/deployments/health?format=table
+http://192.*.*.*:31298/healthz?format=html
 ```
 
 **On AWS EKS:**
 
 ```bash
-# Install with default LoadBalancer
-helm install sre-tool ./helm/sre-tool
+# Install with default LoadBalancer — one command per cluster
+helm install sre-tool ./helm/sre-tool --set clusterName=clusterA --kube-context clusterA
+helm install sre-tool ./helm/sre-tool --set clusterName=clusterB --kube-context clusterB
 
-# Get the load balancer DNS name (may take 1-2 min to provision)
-kubectl get svc sre-tool
-# EXTERNAL-IP: a1b2c3d4.us-east-2.elb.amazonaws.com
+# Get the load balancer DNS name for each cluster (may take 1-2 min to provision)
+kubectl get svc sre-tool --context=clusterA
+kubectl get svc sre-tool --context=clusterB
 
-curl -s http://<EXTERNAL-IP>:8080/healthz | jq .
-curl -s http://<EXTERNAL-IP>:8080/deployments/health | jq .
+curl -s http://<clusterA-EXTERNAL-IP>:8080/deployments/health | jq .
+curl -s http://<clusterB-EXTERNAL-IP>:8080/deployments/health | jq .
 
 # Browser — accessible from any machine including Windows
-http://<EXTERNAL-IP>:8080/healthz?format=html
-http://<EXTERNAL-IP>:8080/deployments/health?format=html
-http://<EXTERNAL-IP>:8080/deployments/health?format=table
+http://<clusterA-EXTERNAL-IP>:8080/deployments/health?format=html
+http://<clusterB-EXTERNAL-IP>:8080/deployments/health?format=html
 ```
 
 ### Upgrading
 
 ```bash
-helm upgrade sre-tool ./helm/sre-tool --set image.tag=sha-newsha
+# Multi-cluster — upgrade each independently
+helm upgrade sre-tool ./helm/sre-tool --set clusterName=clusterA --kube-context clusterA
+helm upgrade sre-tool ./helm/sre-tool --set clusterName=clusterB --kube-context clusterB
 ```
 
 ### Uninstalling
 
 ```bash
-helm uninstall sre-tool
+# Multi-cluster
+helm uninstall sre-tool --kube-context clusterA
+helm uninstall sre-tool --kube-context clusterB
 ```
 
 ---
@@ -242,6 +327,8 @@ helm uninstall sre-tool
 ## Implementation Notes
 
 - **In-cluster vs out-of-cluster:** When `--kubeconfig` is not provided, `client-go` automatically detects it is running inside the cluster and reads the service account token from the mounted path. The same binary works both locally (with `--kubeconfig`) and inside the cluster (without it).
+- **Cluster name identification:** The `clusterName` value is passed to the pod as a `CLUSTER_NAME` environment variable. Every JSON response and HTML dashboard title includes this name so the operator always knows which cluster the data is for.
+- **Multi-cluster pattern:** Deploy one instance of the tool per cluster using `--set clusterName=<name> --kube-context <context>`. Each instance monitors only its own cluster using the in-cluster service account token. Adding a new cluster requires one `helm install` command — no code changes needed.
 - **Static binary:** `CGO_ENABLED=0` produces a binary with no C library dependencies. This is required for the binary to run in a minimal Alpine image.
 - **Non-root container:** The Dockerfile creates a dedicated `sreuser` with numeric UID 1001. The Helm chart enforces `runAsNonRoot: true` and `runAsUser: 1001` — Kubernetes requires a numeric UID to verify the container is not running as root.
 - **Liveness vs readiness probes:** Both hit `/healthz`. The liveness probe restarts the pod if the API server becomes unreachable. The readiness probe removes the pod from Service endpoints until it confirms connectivity.
